@@ -1,4 +1,4 @@
--- Migration: Initial Schema for Invoixa
+-- Migration: Initial Schema for Invoixa (Idempotent / Re-run Safe)
 
 -- 1. Create Helper Function to auto-update 'updated_at' timestamps
 create or replace function public.handle_updated_at()
@@ -19,10 +19,10 @@ create table if not exists public.users (
   app_status text not null default 'allowed' check (app_status in ('allowed', 'banned')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
-
 );
 
 -- Trigger for users updated_at
+drop trigger if exists set_users_updated_at on public.users;
 create trigger set_users_updated_at
 before update on public.users
 for each row execute function public.handle_updated_at();
@@ -45,6 +45,7 @@ create table if not exists public.projects (
 );
 
 -- Trigger for projects updated_at
+drop trigger if exists set_projects_updated_at on public.projects;
 create trigger set_projects_updated_at
 before update on public.projects
 for each row execute function public.handle_updated_at();
@@ -61,6 +62,7 @@ create table if not exists public.tasks (
 );
 
 -- Trigger for tasks updated_at
+drop trigger if exists set_tasks_updated_at on public.tasks;
 create trigger set_tasks_updated_at
 before update on public.tasks
 for each row execute function public.handle_updated_at();
@@ -96,6 +98,7 @@ alter table public.payment_entries enable row level security;
 alter table public.predefined_services enable row level security;
 
 -- RLS Policies for USERS
+drop policy if exists "Users can view profile" on public.users;
 create policy "Users can view profile" on public.users
   for select using (
     auth.uid() = id OR id in (
@@ -103,13 +106,16 @@ create policy "Users can view profile" on public.users
     )
   );
 
+drop policy if exists "Users can update own profile" on public.users;
 create policy "Users can update own profile" on public.users
   for update using (auth.uid() = id);
 
+drop policy if exists "Users can insert own profile" on public.users;
 create policy "Users can insert own profile" on public.users
   for insert with check (auth.uid() = id);
 
 -- RLS Policies for PROJECTS
+drop policy if exists "Owners or shared users can view projects" on public.projects;
 create policy "Owners or shared users can view projects" on public.projects
   for select using (
     auth.uid() = user_id OR exists (
@@ -118,16 +124,20 @@ create policy "Owners or shared users can view projects" on public.projects
     )
   );
 
+drop policy if exists "Owners can insert projects" on public.projects;
 create policy "Owners can insert projects" on public.projects
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "Owners can update projects" on public.projects;
 create policy "Owners can update projects" on public.projects
   for update using (auth.uid() = user_id);
 
+drop policy if exists "Owners can delete projects" on public.projects;
 create policy "Owners can delete projects" on public.projects
   for delete using (auth.uid() = user_id);
 
 -- RLS Policies for TASKS
+drop policy if exists "Owners or shared users with tasks access can view tasks" on public.tasks;
 create policy "Owners or shared users with tasks access can view tasks" on public.tasks
   for select using (
     auth.uid() = user_id OR exists (
@@ -138,16 +148,20 @@ create policy "Owners or shared users with tasks access can view tasks" on publi
     )
   );
 
+drop policy if exists "Owners can insert tasks" on public.tasks;
 create policy "Owners can insert tasks" on public.tasks
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "Owners can update tasks" on public.tasks;
 create policy "Owners can update tasks" on public.tasks
   for update using (auth.uid() = user_id);
 
+drop policy if exists "Owners can delete tasks" on public.tasks;
 create policy "Owners can delete tasks" on public.tasks
   for delete using (auth.uid() = user_id);
 
 -- RLS Policies for PAYMENT ENTRIES
+drop policy if exists "Owners or shared users with payments access can view payment entries" on public.payment_entries;
 create policy "Owners or shared users with payments access can view payment entries" on public.payment_entries
   for select using (
     auth.uid() = user_id OR exists (
@@ -158,24 +172,31 @@ create policy "Owners or shared users with payments access can view payment entr
     )
   );
 
+drop policy if exists "Owners can insert payment entries" on public.payment_entries;
 create policy "Owners can insert payment entries" on public.payment_entries
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "Owners can update payment entries" on public.payment_entries;
 create policy "Owners can update payment entries" on public.payment_entries
   for update using (auth.uid() = user_id);
 
+drop policy if exists "Owners can delete payment entries" on public.payment_entries;
 create policy "Owners can delete payment entries" on public.payment_entries
   for delete using (auth.uid() = user_id);
 
 -- RLS Policies for PREDEFINED SERVICES
+drop policy if exists "Users can view own predefined services" on public.predefined_services;
 create policy "Users can view own predefined services" on public.predefined_services
   for select using (auth.uid() = user_id);
 
+drop policy if exists "Users can insert own predefined services" on public.predefined_services;
 create policy "Users can insert own predefined services" on public.predefined_services
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "Users can update own predefined services" on public.predefined_services;
 create policy "Users can update own predefined services" on public.predefined_services
   for update using (auth.uid() = user_id);
 
+drop policy if exists "Users can delete own predefined services" on public.predefined_services;
 create policy "Users can delete own predefined services" on public.predefined_services
   for delete using (auth.uid() = user_id);
