@@ -3,11 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../core/database/invoice_repository.dart';
-import '../../core/models/invoice_model.dart';
-import '../../core/models/service_model.dart';
-import '../../core/models/client_model.dart';
-import '../../core/models/predefined_service_model.dart';
 import '../directories/client_directory_screen.dart';
 import '../directories/service_directory_screen.dart';
 import 'widgets/accent_color_dot.dart';
@@ -40,8 +35,6 @@ class ServiceRowData {
 }
 
 class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
-  final repo = InvoiceRepository();
-
   // Controllers for main fields
   final clientController = TextEditingController();
   final yourNameController = TextEditingController();
@@ -123,7 +116,6 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
     _addServiceRow();
     _loadLastInvoiceData();
 
-    // Focus listeners for main fields
     _paymentFocusNode.addListener(() => _updateAddButton(_paymentController.text, _paymentMethods, (v) => _showPaymentAddButton = v));
     _clientFocusNode.addListener(() => _updateAddButton(clientController.text, _clientNames, (v) => _showClientAddButton = v));
     _yourNameFocusNode.addListener(() => _updateAddButton(yourNameController.text, _yourNames, (v) => _showYourNameAddButton = v));
@@ -153,7 +145,6 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
     discountController.dispose();
     penaltyController.dispose();
 
-
     for (var row in serviceDatas) {
       row.dispose();
     }
@@ -169,18 +160,15 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
     if (mounted) setState(() {});
   }
 
-  List<Client> _dbClients = [];
-  List<PredefinedService> _dbServices = [];
+  final List<Map<String, dynamic>> _dbClients = [];
+  final List<Map<String, dynamic>> _dbServices = [];
 
   Future<void> _loadAutocompleteLists() async {
     final prefs = await SharedPreferences.getInstance();
 
-    _dbClients = await repo.getClients();
-    _dbServices = await repo.getPredefinedServices();
-
     if (mounted) {
       setState(() {
-        _clientNames = _dbClients.map((c) => c.name).toList();
+        _clientNames = prefs.getStringList("savedClientNames") ?? [];
         _yourNames = prefs.getStringList("savedYourNames") ?? [];
         _brandNames = prefs.getStringList("savedBrandNames") ?? [];
         _accounts = prefs.getStringList("savedAccounts") ?? [];
@@ -263,8 +251,11 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
 
     if (picked != null && mounted) {
       setState(() {
-        if (isIssued) issuedDate = picked;
-        else dueDate = picked;
+        if (isIssued) {
+          issuedDate = picked;
+        } else {
+          dueDate = picked;
+        }
       });
     }
   }
@@ -326,36 +317,11 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
   Future<void> saveInvoice() async {
     if (!_validateForm()) return;
 
-    // Save new client to database directory if new
     final clientName = clientController.text.trim();
-    final isExistingClient = _dbClients.any((c) => c.name.toLowerCase() == clientName.toLowerCase());
-    if (!isExistingClient && clientName.isNotEmpty) {
-      final newClient = Client(
-        name: clientName,
-        email: emailController.text.trim(),
-        phone: phoneController.text.trim(),
-        companyName: brandController.text.trim(),
-        address: '',
-      );
-      await repo.insertClient(newClient);
+    if (clientName.isNotEmpty && !_clientNames.any((c) => c.toLowerCase() == clientName.toLowerCase())) {
+      await _addNewValue(clientName, _clientNames, "savedClientNames");
     }
 
-    // Save new services to database directory if new
-    for (var row in serviceDatas) {
-      final sName = row.nameController.text.trim();
-      final isExistingService = _dbServices.any((s) => s.name.toLowerCase() == sName.toLowerCase());
-      if (!isExistingService && sName.isNotEmpty) {
-        final sPrice = double.tryParse(row.priceController.text) ?? 0.0;
-        final newService = PredefinedService(
-          name: sName,
-          description: '',
-          defaultPrice: sPrice,
-        );
-        await repo.insertPredefinedService(newService);
-      }
-    }
-
-    // Save new service names to legacy autocomplete list as well for fallback
     final prefs = await SharedPreferences.getInstance();
     for (var row in serviceDatas) {
       final name = row.nameController.text.trim();
@@ -367,45 +333,50 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
 
     await _saveToPrefs();
 
-    final invoice = Invoice(
-      clientName: clientController.text.trim(),
-      yourName: yourNameController.text.trim(),
-      brandName: brandController.text.trim(),
-      issuedDate: DateFormat("dd MMM yyyy").format(issuedDate),
-      dueDate: DateFormat("dd MMM yyyy").format(dueDate),
-      currencySymbol: currencySymbol,
-      currencyCode: currencyCode,
-      discount: double.tryParse(discountController.text) ?? 0,
-      subtotal: subtotal,
-      total: total,
-      paymentMethod: _selectedPayment.trim(),
-      accountNo: accountController.text.trim(),
-      email: emailController.text.trim(),
-      phone: phoneController.text.trim(),
-      status: status,
-      penaltyType: penaltyType,
-      penaltyValue: double.tryParse(penaltyController.text) ?? 0,
-      notes: "",
-      createdAt: DateTime.now().toString(),
-      templateStyle: templateStyle,
-      accentColor: accentColor,
-    );
+    final generatedId = DateTime.now().millisecondsSinceEpoch % 100000;
 
-    final invoiceId = await repo.insertInvoice(invoice);
+    final invoice = {
+      'id': generatedId,
+      'clientName': clientController.text.trim(),
+      'yourName': yourNameController.text.trim(),
+      'brandName': brandController.text.trim(),
+      'issuedDate': DateFormat("dd MMM yyyy").format(issuedDate),
+      'dueDate': DateFormat("dd MMM yyyy").format(dueDate),
+      'currencySymbol': currencySymbol,
+      'currencyCode': currencyCode,
+      'discount': double.tryParse(discountController.text) ?? 0,
+      'subtotal': subtotal,
+      'total': total,
+      'paidAmount': 0.0,
+      'paymentMethod': _selectedPayment.trim(),
+      'accountNo': accountController.text.trim(),
+      'email': emailController.text.trim(),
+      'phone': phoneController.text.trim(),
+      'status': status,
+      'penaltyType': penaltyType,
+      'penaltyValue': double.tryParse(penaltyController.text) ?? 0,
+      'notes': "",
+      'createdAt': DateTime.now().toString(),
+      'templateStyle': templateStyle,
+      'accentColor': accentColor,
+    };
 
     final services = serviceDatas.map((s) {
-      return ServiceItem(
-        invoiceId: invoiceId,
-        serviceName: s.nameController.text.trim(),
-        quantity: int.tryParse(s.quantityController.text) ?? 0,
-        price: double.tryParse(s.priceController.text) ?? 0,
-        total: s.total,
-      );
+      return {
+        'invoiceId': generatedId,
+        'serviceName': s.nameController.text.trim(),
+        'quantity': int.tryParse(s.quantityController.text) ?? 0,
+        'price': double.tryParse(s.priceController.text) ?? 0.0,
+        'total': s.total,
+      };
     }).toList();
 
-    await repo.insertServices(services);
-
-    if (mounted) Navigator.pop(context);
+    if (mounted) {
+      Navigator.pop(context, {
+        'invoice': invoice,
+        'services': services,
+      });
+    }
   }
 
   @override
@@ -422,7 +393,6 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ─── PARTY DETAILS ────────────────────────────────────────────
             InvoiceFormSectionCard(
               title: "Invoice Details",
               child: Column(
@@ -441,14 +411,14 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                           onChanged: (v) => _updateAddButton(v, _clientNames, (b) => _showClientAddButton = b),
                           onSelected: (selection) {
                             final client = _dbClients.firstWhere(
-                              (c) => c.name.toLowerCase() == selection.toLowerCase(),
-                              orElse: () => Client(name: selection),
+                              (c) => (c['name'] as String? ?? '').toLowerCase() == selection.toLowerCase(),
+                              orElse: () => {'name': selection},
                             );
-                            if (client.id != null) {
+                            if (client['id'] != null) {
                               setState(() {
-                                emailController.text = client.email;
-                                phoneController.text = client.phone;
-                                brandController.text = client.companyName;
+                                emailController.text = client['email'] as String? ?? '';
+                                phoneController.text = client['phone'] as String? ?? '';
+                                brandController.text = client['companyName'] as String? ?? '';
                               });
                             }
                           },
@@ -459,7 +429,7 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                         icon: const Icon(Icons.people_alt_outlined),
                         tooltip: "Client Directory",
                         onPressed: () async {
-                          final selected = await Navigator.push<Client>(
+                          final selected = await Navigator.push<Map<String, dynamic>>(
                             context,
                             MaterialPageRoute(builder: (_) => const ClientDirectoryScreen(selectionMode: true)),
                           );
@@ -467,11 +437,10 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
 
                           if (selected != null) {
                             setState(() {
-                              clientController.text = selected.name;
-                              // Auto-fill client fields
-                              emailController.text = selected.email;
-                              phoneController.text = selected.phone;
-                              brandController.text = selected.companyName;
+                              clientController.text = selected['name'] as String? ?? '';
+                              emailController.text = selected['email'] as String? ?? '';
+                              phoneController.text = selected['phone'] as String? ?? '';
+                              brandController.text = selected['companyName'] as String? ?? '';
                               _showClientAddButton = false;
                             });
                           }
@@ -534,7 +503,6 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
 
             const SizedBox(height: 32),
 
-            // ─── DATES ─────────────────────────────────────────────────────
             InvoiceFormSectionCard(
               title: "Invoice Dates",
               child: Row(
@@ -594,12 +562,12 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                               },
                               onSelected: (selection) {
                                 final s = _dbServices.firstWhere(
-                                  (item) => item.name.toLowerCase() == selection.toLowerCase(),
-                                  orElse: () => PredefinedService(name: selection, defaultPrice: 0),
+                                  (item) => (item['name'] as String? ?? '').toLowerCase() == selection.toLowerCase(),
+                                  orElse: () => {'name': selection, 'defaultPrice': 0},
                                 );
-                                if (s.id != null) {
+                                if (s['id'] != null) {
                                   setState(() {
-                                    data.priceController.text = s.defaultPrice.toStringAsFixed(0);
+                                    data.priceController.text = ((s['defaultPrice'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0);
                                     calculateTotal();
                                   });
                                 }
@@ -611,7 +579,7 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                             icon: const Icon(Icons.design_services_outlined),
                             tooltip: "Service Directory",
                             onPressed: () async {
-                              final selected = await Navigator.push<PredefinedService>(
+                              final selected = await Navigator.push<Map<String, dynamic>>(
                                 context,
                                 MaterialPageRoute(builder: (_) => const ServiceDirectoryScreen(selectionMode: true)),
                               );
@@ -619,8 +587,8 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
 
                               if (selected != null) {
                                 setState(() {
-                                  data.nameController.text = selected.name;
-                                  data.priceController.text = selected.defaultPrice.toStringAsFixed(0);
+                                  data.nameController.text = selected['name'] as String? ?? '';
+                                  data.priceController.text = ((selected['defaultPrice'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(0);
                                   data.showAddButton = false;
                                   calculateTotal();
                                 });
@@ -698,7 +666,6 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
 
             const SizedBox(height: 32),
 
-            // Payment Information (unchanged)
             InvoiceFormSectionCard(
               title: "Payment Information",
               child: Column(
@@ -799,7 +766,6 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                         onChanged: (val) {
                           setState(() {
                             currencyCode = val!;
-                            // Look up the symbol in the map using the selected key
                             currencySymbol = currencyMap[val] ?? "PKR";
                           });
                         },
@@ -834,7 +800,9 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                                 DropdownMenuItem(value: "Direct", child: Text("Fixed Amount")),
                               ],
                               onChanged: (String? newValue) {
-                                if (newValue != null) setState(() => penaltyType = newValue!);
+                                if (newValue != null) {
+                                  setState(() => penaltyType = newValue);
+                                }
                               },
                             ),
                           ),
@@ -985,5 +953,4 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
       ),
     );
   }
-
 }

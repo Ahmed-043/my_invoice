@@ -4,11 +4,9 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../core/database/invoice_repository.dart';
-import '../../core/models/invoice_model.dart';
 import '../../core/theme/theme_provider.dart';
 import '../invoice_form/invoice_form_screen.dart';
-import '../invoice_view/invoice_preview_screen.dart'; // Assuming this is the correct import name
+import '../invoice_view/invoice_preview_screen.dart';
 import '../directories/client_directory_screen.dart';
 import '../directories/service_directory_screen.dart';
 import 'widgets/financial_summary_dashboard.dart';
@@ -21,12 +19,12 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  final repo = InvoiceRepository();
-  List<Invoice> allInvoices = [];
+  List<Map<String, dynamic>> allInvoices = [];
+  Map<int, List<Map<String, dynamic>>> invoiceServicesMap = {};
   final searchController = TextEditingController();
 
   List<String> displayOrder = [];
-  Map<String, List<Invoice>> grouped = {};
+  Map<String, List<Map<String, dynamic>>> grouped = {};
 
   double totalReceived = 0.0;
   double totalReceivables = 0.0;
@@ -46,14 +44,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> loadData({String query = ''}) async {
-    if (query.trim().isEmpty) {
-      allInvoices = await repo.getAllInvoices();
-    } else {
-      allInvoices = await repo.searchInvoices(query.trim());
-    }
-
     _calculateStats();
-    await _groupAndSort();
+    await _groupAndSort(query: query);
   }
 
   void _calculateStats() {
@@ -66,12 +58,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final inputFormat = DateFormat("d MMM yyyy");
 
     for (var inv in allInvoices) {
-      received += inv.paidAmount;
-      unpaid += (inv.total - inv.paidAmount);
+      final paidAmount = (inv['paidAmount'] as num?)?.toDouble() ?? 0.0;
+      final total = (inv['total'] as num?)?.toDouble() ?? 0.0;
+      final status = (inv['status'] as String? ?? 'pending').toLowerCase();
+      final dueDateStr = inv['dueDate'] as String? ?? '';
 
-      if (inv.status.toLowerCase() != 'paid') {
+      received += paidAmount;
+      unpaid += (total - paidAmount);
+
+      if (status != 'paid') {
         try {
-          final dueDate = inputFormat.parse(inv.dueDate);
+          final dueDate = inputFormat.parse(dueDateStr);
           final dueDay = DateTime(dueDate.year, dueDate.month, dueDate.day);
           if (dueDay.isBefore(today)) {
             overdue++;
@@ -90,28 +87,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     collectionProgress = totalVolume > 0 ? (totalReceived / totalVolume) : 0.0;
   }
 
-  Future<void> _groupAndSort() async {
+  Future<void> _groupAndSort({String query = ''}) async {
     final prefs = await SharedPreferences.getInstance();
     List<String> savedClients = prefs.getStringList('savedClientNames') ?? [];
 
-    // Group current invoices by client name (trimmed for consistency)
+    List<Map<String, dynamic>> filteredInvoices = allInvoices;
+    if (query.trim().isNotEmpty) {
+      final q = query.trim().toLowerCase();
+      filteredInvoices = allInvoices.where((inv) {
+        final idStr = inv['id'].toString();
+        final clientName = (inv['clientName'] as String? ?? '').toLowerCase();
+        final yourName = (inv['yourName'] as String? ?? '').toLowerCase();
+        final brandName = (inv['brandName'] as String? ?? '').toLowerCase();
+
+        return idStr == q ||
+            clientName.contains(q) ||
+            yourName.contains(q) ||
+            brandName.contains(q);
+      }).toList();
+    }
+
     grouped = {};
-    for (var inv in allInvoices) {
-      final client = inv.clientName.trim();
+    for (var inv in filteredInvoices) {
+      final client = (inv['clientName'] as String? ?? '').trim();
       grouped.putIfAbsent(client, () => []).add(inv);
     }
 
-    // Clients that currently have invoices
     final activeClients = grouped.keys.toSet();
-
-    // Keep saved order for clients that still exist
     displayOrder = savedClients.where((c) => activeClients.contains(c)).toList();
 
-    // Add any newly appeared clients at the end
     final newClients = activeClients.difference(savedClients.toSet()).toList();
     displayOrder.addAll(newClients);
 
-    // Update saved list (add new ones, keep old ones even if currently empty)
     final updatedSaved = [...savedClients, ...newClients].toSet().toList();
     await prefs.setStringList('savedClientNames', updatedSaved);
 
@@ -120,14 +127,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-  Future<void> _showPaymentDialog(Invoice invoice) async {
+  Future<void> _showPaymentDialog(Map<String, dynamic> invoice) async {
     final amountController = TextEditingController();
     final formKey = GlobalKey<FormState>();
+
+    final id = invoice['id'];
+    final paidAmount = (invoice['paidAmount'] as num?)?.toDouble() ?? 0.0;
+    final total = (invoice['total'] as num?)?.toDouble() ?? 0.0;
+    final currencySymbol = invoice['currencySymbol'] as String? ?? 'Rs';
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text("Payment for Invoice #${invoice.id}"),
+        title: Text("Payment for Invoice #$id"),
         content: Form(
           key: formKey,
           child: Column(
@@ -135,7 +147,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                "Current: ${invoice.paidAmount.toStringAsFixed(2)} / ${invoice.total.toStringAsFixed(2)} ${invoice.currencySymbol}",
+                "Current: ${paidAmount.toStringAsFixed(2)} / ${total.toStringAsFixed(2)} $currencySymbol",
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -146,7 +158,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 decoration: InputDecoration(
                   labelText: "Amount",
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  prefixText: "${invoice.currencySymbol} ",
+                  prefixText: "$currencySymbol ",
                 ),
                 keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
                 inputFormatters: [
@@ -191,70 +203,64 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       final amount = double.tryParse(amountText);
 
       if (amount != null) {
-        try {
-          await repo.recordPayment(invoice.id!, amount);
+        final index = allInvoices.indexWhere((i) => i['id'] == id);
+        if (index != -1) {
+          final current = allInvoices[index];
+          final currentPaid = (current['paidAmount'] as num?)?.toDouble() ?? 0.0;
+          final currentTotal = (current['total'] as num?)?.toDouble() ?? 0.0;
+
+          double newPaid = (currentPaid + amount).clamp(0.0, currentTotal);
+          String newStatus = newPaid >= currentTotal
+              ? 'paid'
+              : (newPaid > 0 ? 'partially_paid' : 'pending');
+
+          allInvoices[index]['paidAmount'] = newPaid;
+          allInvoices[index]['status'] = newStatus;
+
           await loadData(query: searchController.text);
-          if (mounted) {
-            // ScaffoldMessenger.of(context).showSnackBar(
-            //   SnackBar(
-            //     content: Text(
-            //       amount >= 0
-            //           ? "Added ${invoice.currencySymbol}${amount.toStringAsFixed(2)}"
-            //           : "Deducted ${invoice.currencySymbol}${(-amount).toStringAsFixed(2)}",
-            //     ),
-            //   ),
-            // );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Error: $e")),
-            );
-          }
         }
       }
     }
   }
 
-  void _showSnackbar(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-    );
+  int _getClientInvoiceSequence(Map<String, dynamic> invoice) {
+    final clientName = (invoice['clientName'] as String? ?? '').trim().toLowerCase();
+    final id = invoice['id'];
+
+    final clientInvoices = allInvoices
+        .where((i) => (i['clientName'] as String? ?? '').trim().toLowerCase() == clientName)
+        .toList();
+
+    final index = clientInvoices.indexWhere((i) => i['id'] == id);
+    return index != -1 ? index + 1 : 1;
   }
 
-  void _showRestartDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Success"),
-        content: const Text("Database restored. Please restart the app to see your data."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("OK"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInvoiceTile(Invoice invoice) {
+  Widget _buildInvoiceTile(Map<String, dynamic> invoice) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
-    final isPaid = invoice.status.toLowerCase() == 'paid';
-    final isPartial = invoice.status.toLowerCase() == 'partially_paid';
+    final id = invoice['id'];
+    final status = (invoice['status'] as String? ?? 'pending').toLowerCase();
+    final currencySymbol = invoice['currencySymbol'] as String? ?? 'Rs';
+    final total = (invoice['total'] as num?)?.toDouble() ?? 0.0;
+    final dueDateStr = invoice['dueDate'] as String? ?? '';
+
+    final isPaid = status == 'paid';
+    final isPartial = status == 'partially_paid';
     final isPending = !isPaid && !isPartial;
     DateFormat inputFormat = DateFormat("d MMM yyyy");
 
-    DateTime dueDate = inputFormat.parse(invoice.dueDate);
+    DateTime dueDate = DateTime.now();
+    try {
+      dueDate = inputFormat.parse(dueDateStr);
+    } catch (_) {}
 
     final isDue = dueDate.isBefore(DateTime.now());
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Hero(
-        tag: "invoice-${invoice.id}",
+        tag: "invoice-$id",
         child: Card(
           elevation: isPending ? 2 : 1,
           shadowColor: colorScheme.primary,
@@ -267,8 +273,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
             onTap: () async {
-              final services = await repo.getServicesByInvoice(invoice.id!);
-              final int clientInvoiceSequence = await repo.getClientInvoiceSequence(invoice.id!, invoice.clientName);
+              final services = invoiceServicesMap[id] ?? [];
+              final int clientInvoiceSequence = _getClientInvoiceSequence(invoice);
 
               if (!mounted) return;
               Navigator.push(
@@ -279,9 +285,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     services: services,
                     clientInvoiceSequence: clientInvoiceSequence,
                     callBack: () async {
-                      print("Deleted");
                       await loadData(query: searchController.text);
-                      },
+                    },
                   ),
                 ),
               );
@@ -295,12 +300,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: isPaid
-                      ? colorScheme.primary.withOpacity(0.15)
+                      ? colorScheme.primary.withValues(alpha: 0.15)
                       : isPartial
-                      ? colorScheme.tertiary.withOpacity(0.15)
+                      ? colorScheme.tertiary.withValues(alpha: 0.15)
                       : isDue
-                      ? colorScheme.error.withOpacity(0.12)
-                      :colorScheme.primary.withOpacity(0.15),
+                      ? colorScheme.error.withValues(alpha: 0.12)
+                      : colorScheme.primary.withValues(alpha: 0.15),
                 ),
                 child: Icon(
                   isPaid
@@ -321,11 +326,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
               title: Text(
-                "Invoice #${invoice.id}",
+                "Invoice #$id",
                 style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
               ),
               subtitle: Text(
-                "${invoice.currencySymbol} ${invoice.total.toStringAsFixed(0)} • ${invoice.status.toUpperCase()}",
+                "$currencySymbol ${total.toStringAsFixed(0)} • ${status.toUpperCase()}",
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: isPaid
                       ? colorScheme.primary
@@ -347,21 +352,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Widget _buildClientExpansionTile(String clientName) {
     final invoices = grouped[clientName]!;
-    final totalAmount = invoices.fold<double>(0, (sum, inv) => sum + inv.total);
+    final totalAmount = invoices.fold<double>(0, (sum, inv) => sum + ((inv['total'] as num?)?.toDouble() ?? 0.0));
     final pendingAmount = invoices
-        .where((inv) => inv.status.toLowerCase() != 'paid')
-        .fold<double>(0, (sum, inv) => sum + (inv.total - inv.paidAmount));
-    final pendingCount = invoices.where((inv) => inv.status.toLowerCase() != 'paid').length;
+        .where((inv) => (inv['status'] as String? ?? '').toLowerCase() != 'paid')
+        .fold<double>(0, (sum, inv) {
+      final total = (inv['total'] as num?)?.toDouble() ?? 0.0;
+      final paid = (inv['paidAmount'] as num?)?.toDouble() ?? 0.0;
+      return sum + (total - paid);
+    });
+    final pendingCount = invoices.where((inv) => (inv['status'] as String? ?? '').toLowerCase() != 'paid').length;
 
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final currencySymbol = invoices.isNotEmpty ? (invoices.first['currencySymbol'] as String? ?? 'Rs') : 'Rs';
 
     return Card(
-      key: ValueKey(clientName), // Required for ReorderableListView
+      key: ValueKey(clientName),
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       elevation: 2,
-      shadowColor: colorScheme.shadow.withOpacity(0.15),
-
+      shadowColor: colorScheme.shadow.withValues(alpha: 0.15),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(20),
@@ -410,7 +419,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                "${invoices.isNotEmpty ? invoices.first.currencySymbol : ''} ${totalAmount.toStringAsFixed(0)}",
+                "$currencySymbol ${totalAmount.toStringAsFixed(0)}",
                 style: theme.textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                   color: colorScheme.primary,
@@ -418,7 +427,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
               if (pendingAmount > 0)
                 Text(
-                  "Due: ${invoices.isNotEmpty ? invoices.first.currencySymbol : ''} ${pendingAmount.toStringAsFixed(0)}",
+                  "Due: $currencySymbol ${pendingAmount.toStringAsFixed(0)}",
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: colorScheme.error,
                     fontWeight: FontWeight.w500,
@@ -442,26 +451,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         actions: [
           PopupMenuButton<String>(
             onSelected: (value) async {
-              final repository = InvoiceRepository();
-
               switch (value) {
                 case 'theme':
                   ref.read(themeProvider.notifier).toggleTheme();
-                  break;
-
-                case 'export':
-                  final result = await repository.exportDatabase();
-                  _showSnackbar(context, result ?? "Export task finished");
-                  break;
-
-                case 'import':
-                  final result = await repository.importDatabase();
-                  // We show a dialog because the app usually needs a restart after DB overwrite
-                  if (result != null && result.contains("restored")) {
-                    _showRestartDialog(context);
-                  } else {
-                    _showSnackbar(context, result ?? "Import task finished");
-                  }
                   break;
 
                 case 'clients':
@@ -511,26 +503,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     Icon(Icons.design_services_outlined, size: 20),
                     SizedBox(width: 10),
                     Text("Service Directory"),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'export',
-                child: Row(
-                  children: [
-                    Icon(Icons.unarchive, size: 20),
-                    SizedBox(width: 10),
-                    Text("Export Backup"),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'import',
-                child: Row(
-                  children: [
-                    Icon(Icons.archive, size: 20),
-                    SizedBox(width: 10),
-                    Text("Import Backup"),
                   ],
                 ),
               ),
@@ -596,10 +568,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          await Navigator.push(
+          final result = await Navigator.push<Map<String, dynamic>>(
             context,
             MaterialPageRoute(builder: (_) => const InvoiceFormScreen()),
           );
+          if (result != null) {
+            final invoice = result['invoice'] as Map<String, dynamic>?;
+            final services = result['services'] as List<Map<String, dynamic>>?;
+            if (invoice != null && services != null) {
+              final id = invoice['id'] as int;
+              setState(() {
+                allInvoices.insert(0, invoice);
+                invoiceServicesMap[id] = services;
+              });
+            }
+          }
           await loadData(query: searchController.text);
         },
         icon: const Icon(Icons.add),

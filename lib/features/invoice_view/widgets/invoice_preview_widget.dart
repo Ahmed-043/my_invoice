@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/models/invoice_model.dart';
-import '../../../core/models/service_model.dart';
-
 class InvoicePreviewWidget extends StatelessWidget {
-  final Invoice invoice;
-  final List<ServiceItem> services;
+  final Map<String, dynamic> invoice;
+  final List<Map<String, dynamic>> services;
   final int clientInvoiceSequence;
   final bool showTracking;
 
@@ -18,7 +15,8 @@ class InvoicePreviewWidget extends StatelessWidget {
   });
 
   Color _getAccentColor(ColorScheme colorScheme) {
-    switch (invoice.accentColor.toLowerCase()) {
+    final accentStr = (invoice['accentColor'] as String? ?? 'default').toLowerCase();
+    switch (accentStr) {
       case 'blue':
         return Colors.indigo;
       case 'green':
@@ -56,7 +54,8 @@ class InvoicePreviewWidget extends StatelessWidget {
   }
 
   Widget _buildTemplate(ColorScheme colorScheme, Color accent) {
-    switch (invoice.templateStyle.toLowerCase()) {
+    final style = (invoice['templateStyle'] as String? ?? 'classic').toLowerCase();
+    switch (style) {
       case 'modern':
         return _buildModernTemplate(colorScheme, accent);
       case 'bold':
@@ -76,19 +75,19 @@ class InvoicePreviewWidget extends StatelessWidget {
       children: [
         _buildClassicHeader(colorScheme, accent),
         const SizedBox(height: 5),
-        Divider(color: accent.withOpacity(0.2), thickness: 1),
+        Divider(color: accent.withValues(alpha: 0.2), thickness: 1),
         const SizedBox(height: 15),
         _buildBillingGrid(colorScheme, accent),
         const SizedBox(height: 15),
-        Divider(color: accent.withOpacity(0.2), thickness: 1),
+        Divider(color: accent.withValues(alpha: 0.2), thickness: 1),
         const SizedBox(height: 10),
         _buildServicesTable(colorScheme, accent),
         const SizedBox(height: 10),
-        Divider(color: accent.withOpacity(0.2), thickness: 1),
+        Divider(color: accent.withValues(alpha: 0.2), thickness: 1),
         const SizedBox(height: 5),
         _buildFooter(colorScheme, accent),
         const SizedBox(height: 10),
-        Divider(color: accent.withOpacity(0.2), thickness: 1),
+        Divider(color: accent.withValues(alpha: 0.2), thickness: 1),
         const SizedBox(height: 10),
         _buildFinalFooter(colorScheme, accent),
       ],
@@ -96,6 +95,7 @@ class InvoicePreviewWidget extends StatelessWidget {
   }
 
   Widget _buildClassicHeader(ColorScheme colorScheme, Color accent) {
+    final id = invoice['id'];
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -110,7 +110,7 @@ class InvoicePreviewWidget extends StatelessWidget {
           ),
         ),
         Text(
-          showTracking ? "#${invoice.id.toString().padLeft(2, '0')}" : clientInvoiceSequence.toString().padLeft(2, '0'),
+          showTracking ? "#${id.toString().padLeft(2, '0')}" : clientInvoiceSequence.toString().padLeft(2, '0'),
           style: TextStyle(
             fontSize: 60,
             color: accent,
@@ -124,6 +124,13 @@ class InvoicePreviewWidget extends StatelessWidget {
   // ─── MODERN TEMPLATE ───────────────────────────────────────────────────────
 
   Widget _buildModernTemplate(ColorScheme colorScheme, Color accent) {
+    final id = invoice['id'];
+    final brandName = (invoice['brandName'] as String? ?? '').toUpperCase();
+    final clientName = invoice['clientName'] as String? ?? '';
+    final yourName = invoice['yourName'] as String? ?? '';
+    final issuedDate = invoice['issuedDate'] as String? ?? '';
+    final dueDate = invoice['dueDate'] as String? ?? '';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -145,7 +152,7 @@ class InvoicePreviewWidget extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  invoice.brandName.toUpperCase(),
+                  brandName,
                   style: TextStyle(
                     fontSize: 14,
                     color: colorScheme.onSurfaceVariant,
@@ -158,14 +165,14 @@ class InvoicePreviewWidget extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: accent.withOpacity(0.1),
+                color: accent.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: accent.withOpacity(0.3)),
+                border: Border.all(color: accent.withValues(alpha: 0.3)),
               ),
               child: Text(
                 showTracking
-                    ? "ID #${invoice.id.toString().padLeft(2, '0')}"
-                    : "${clientInvoiceSequence.toString().padLeft(2, '0')}",
+                    ? "ID #${id.toString().padLeft(2, '0')}"
+                    : clientInvoiceSequence.toString().padLeft(2, '0'),
                 style: TextStyle(
                   fontSize: 20,
                   color: accent,
@@ -183,16 +190,16 @@ class InvoicePreviewWidget extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: colorScheme.onSurface.withOpacity(0.03),
+                  color: colorScheme.onSurface.withValues(alpha: 0.03),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: colorScheme.onSurface.withOpacity(0.05)),
+                  border: Border.all(color: colorScheme.onSurface.withValues(alpha: 0.05)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _infoBlock('BILLED TO', invoice.clientName, colorScheme, accent),
+                    _infoBlock('BILLED TO', clientName, colorScheme, accent),
                     const SizedBox(height: 20),
-                    _infoBlock('FROM', invoice.yourName, colorScheme, accent),
+                    _infoBlock('FROM', yourName, colorScheme, accent),
                   ],
                 ),
               ),
@@ -202,16 +209,16 @@ class InvoicePreviewWidget extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: colorScheme.onSurface.withOpacity(0.03),
+                  color: colorScheme.onSurface.withValues(alpha: 0.03),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: colorScheme.onSurface.withOpacity(0.05)),
+                  border: Border.all(color: colorScheme.onSurface.withValues(alpha: 0.05)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _infoBlock('ISSUED DATE', invoice.issuedDate, colorScheme, accent),
+                    _infoBlock('ISSUED DATE', issuedDate, colorScheme, accent),
                     const SizedBox(height: 20),
-                    _infoBlock('DUE DATE', invoice.dueDate, colorScheme, accent),
+                    _infoBlock('DUE DATE', dueDate, colorScheme, accent),
                   ],
                 ),
               ),
@@ -221,11 +228,11 @@ class InvoicePreviewWidget extends StatelessWidget {
         const SizedBox(height: 25),
         _buildServicesTable(colorScheme, accent, useModernRowBg: true),
         const SizedBox(height: 20),
-        Divider(color: accent.withOpacity(0.2), thickness: 1),
+        Divider(color: accent.withValues(alpha: 0.2), thickness: 1),
         const SizedBox(height: 10),
         _buildFooter(colorScheme, accent),
         const SizedBox(height: 15),
-        Divider(color: accent.withOpacity(0.2), thickness: 1),
+        Divider(color: accent.withValues(alpha: 0.2), thickness: 1),
         const SizedBox(height: 10),
         _buildFinalFooter(colorScheme, accent),
       ],
@@ -236,6 +243,8 @@ class InvoicePreviewWidget extends StatelessWidget {
 
   Widget _buildBoldTemplate(ColorScheme colorScheme, Color accent) {
     final bannerTextColor = accent.computeLuminance() > 0.5 ? Colors.black87 : Colors.white;
+    final id = invoice['id'];
+    final brandName = (invoice['brandName'] as String? ?? '').toUpperCase();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -264,10 +273,10 @@ class InvoicePreviewWidget extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    invoice.brandName.toUpperCase(),
+                    brandName,
                     style: TextStyle(
                       fontSize: 12,
-                      color: bannerTextColor.withOpacity(0.8),
+                      color: bannerTextColor.withValues(alpha: 0.8),
                       fontWeight: FontWeight.bold,
                       letterSpacing: 1.5,
                     ),
@@ -276,8 +285,8 @@ class InvoicePreviewWidget extends StatelessWidget {
               ),
               Text(
                 showTracking
-                    ? "ID #${invoice.id.toString().padLeft(2, '0')}"
-                    : "${clientInvoiceSequence.toString().padLeft(2, '0')}",
+                    ? "ID #${id.toString().padLeft(2, '0')}"
+                    : clientInvoiceSequence.toString().padLeft(2, '0'),
                 style: TextStyle(
                   fontSize: 24,
                   color: bannerTextColor,
@@ -305,6 +314,11 @@ class InvoicePreviewWidget extends StatelessWidget {
   // ─── HELPER WIDGETS ────────────────────────────────────────────────────────
 
   Widget _buildBillingGrid(ColorScheme colorScheme, Color accent) {
+    final clientName = invoice['clientName'] as String? ?? '';
+    final yourName = invoice['yourName'] as String? ?? '';
+    final issuedDate = invoice['issuedDate'] as String? ?? '';
+    final dueDate = invoice['dueDate'] as String? ?? '';
+
     return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -313,14 +327,14 @@ class InvoicePreviewWidget extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _infoBlock('BILLED TO', invoice.clientName, colorScheme, accent),
+                _infoBlock('BILLED TO', clientName, colorScheme, accent),
                 const SizedBox(height: 30),
-                _infoBlock('FROM', invoice.yourName, colorScheme, accent),
+                _infoBlock('FROM', yourName, colorScheme, accent),
               ],
             ),
           ),
           VerticalDivider(
-            color: accent.withOpacity(0.3),
+            color: accent.withValues(alpha: 0.3),
             thickness: 1,
             indent: 5,
             endIndent: 5,
@@ -330,9 +344,9 @@ class InvoicePreviewWidget extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _infoBlock('ISSUED DATE', invoice.issuedDate, colorScheme, accent),
+                _infoBlock('ISSUED DATE', issuedDate, colorScheme, accent),
                 const SizedBox(height: 30),
-                _infoBlock('DUE DATE', invoice.dueDate, colorScheme, accent),
+                _infoBlock('DUE DATE', dueDate, colorScheme, accent),
               ],
             ),
           ),
@@ -373,6 +387,10 @@ class InvoicePreviewWidget extends StatelessWidget {
     bool useModernRowBg = false,
     bool useBoldHeader = false,
   }) {
+    final currencySymbol = invoice['currencySymbol'] as String? ?? 'Rs';
+    final discount = (invoice['discount'] as num?)?.toDouble() ?? 0.0;
+    final total = (invoice['total'] as num?)?.toDouble() ?? 0.0;
+
     final headerTextColor = useBoldHeader
         ? (accent.computeLuminance() > 0.5 ? Colors.black87 : Colors.white)
         : (accent == colorScheme.onSurface ? colorScheme.onSurfaceVariant : accent);
@@ -436,11 +454,15 @@ class InvoicePreviewWidget extends StatelessWidget {
           final s = entry.value;
           final isEven = idx % 2 == 0;
 
+          final serviceName = s['serviceName'] as String? ?? '';
+          final quantity = s['quantity'] ?? 0;
+          final itemTotal = (s['total'] as num?)?.toDouble() ?? 0.0;
+
           return Container(
             padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
             decoration: useModernRowBg && !isEven
                 ? BoxDecoration(
-                    color: colorScheme.onSurface.withOpacity(0.02),
+                    color: colorScheme.onSurface.withValues(alpha: 0.02),
                     borderRadius: BorderRadius.circular(8),
                   )
                 : null,
@@ -449,7 +471,7 @@ class InvoicePreviewWidget extends StatelessWidget {
                 Expanded(
                   flex: 4,
                   child: Text(
-                    s.serviceName,
+                    serviceName,
                     style: TextStyle(
                       color: colorScheme.onSurface,
                       fontSize: 15,
@@ -460,7 +482,7 @@ class InvoicePreviewWidget extends StatelessWidget {
                 Expanded(
                   child: Center(
                     child: Text(
-                      '${s.quantity}',
+                      '$quantity',
                       style: TextStyle(
                         color: colorScheme.onSurface,
                         fontSize: 15,
@@ -473,7 +495,7 @@ class InvoicePreviewWidget extends StatelessWidget {
                   child: Align(
                     alignment: Alignment.centerRight,
                     child: Text(
-                      '${s.total.toStringAsFixed(0)} ${invoice.currencySymbol}',
+                      '${itemTotal.toStringAsFixed(0)} $currencySymbol',
                       style: TextStyle(
                         color: colorScheme.onSurface,
                         fontSize: 15,
@@ -487,13 +509,13 @@ class InvoicePreviewWidget extends StatelessWidget {
           );
         }),
         const SizedBox(height: 10),
-        Divider(color: accent.withOpacity(0.2), thickness: 1, indent: 300),
+        Divider(color: accent.withValues(alpha: 0.2), thickness: 1, indent: 300),
         const SizedBox(height: 15),
-        _buildTotalRow('DISCOUNT', '${invoice.discount.toStringAsFixed(0)} ${invoice.currencySymbol}', colorScheme, accent),
+        _buildTotalRow('DISCOUNT', '${discount.toStringAsFixed(0)} $currencySymbol', colorScheme, accent),
         const SizedBox(height: 10),
-        Divider(color: accent.withOpacity(0.2), thickness: 1, indent: 200),
+        Divider(color: accent.withValues(alpha: 0.2), thickness: 1, indent: 200),
         const SizedBox(height: 10),
-        _buildTotalRow('TOTAL', '${invoice.total.toStringAsFixed(0)} ${invoice.currencySymbol}', colorScheme, accent, isTotal: true),
+        _buildTotalRow('TOTAL', '${total.toStringAsFixed(0)} $currencySymbol', colorScheme, accent, isTotal: true),
       ],
     );
   }
@@ -524,6 +546,16 @@ class InvoicePreviewWidget extends StatelessWidget {
   }
 
   Widget _buildFooter(ColorScheme colorScheme, Color accent, {bool useModernStyle = false}) {
+    final yourName = invoice['yourName'] as String? ?? '';
+    final accountNo = invoice['accountNo'] as String? ?? '';
+    final paymentMethod = invoice['paymentMethod'] as String? ?? '';
+    final penaltyValue = invoice['penaltyValue'] ?? 0;
+    final penaltyType = invoice['penaltyType'] as String? ?? '%';
+    final currencySymbol = invoice['currencySymbol'] as String? ?? 'Rs';
+    final email = invoice['email'] as String? ?? '';
+
+    final penaltyUnit = penaltyType == '%' ? '%' : currencySymbol;
+
     return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -541,14 +573,14 @@ class InvoicePreviewWidget extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 5),
-                _paymentDetail('NAME', invoice.yourName, colorScheme, accent),
-                _paymentDetail('ACC NO.', invoice.accountNo, colorScheme, accent),
-                _paymentDetail('P. METHOD', invoice.paymentMethod, colorScheme, accent),
+                _paymentDetail('NAME', yourName, colorScheme, accent),
+                _paymentDetail('ACC NO.', accountNo, colorScheme, accent),
+                _paymentDetail('P. METHOD', paymentMethod, colorScheme, accent),
               ],
             ),
           ),
           VerticalDivider(
-            color: accent.withOpacity(0.3),
+            color: accent.withValues(alpha: 0.3),
             thickness: 1,
             indent: 5,
             endIndent: 5,
@@ -566,9 +598,9 @@ class InvoicePreviewWidget extends StatelessWidget {
                   TextSpan(
                     text:
                         '. Invoices are due within one day of the invoice date. '
-                        'A late fee of ${invoice.penaltyValue}${invoice.penaltyType == '%' ? '%' : invoice.currencySymbol} will be added to any past-due balance. '
+                        'A late fee of $penaltyValue$penaltyUnit will be added to any past-due balance. '
                         'Accepted payment methods are mentioned above. '
-                        'If you have any questions regarding your invoice, please contact at ${invoice.email}',
+                        'If you have any questions regarding your invoice, please contact at $email',
                   ),
                 ],
               ),
@@ -614,6 +646,8 @@ class InvoicePreviewWidget extends StatelessWidget {
   }
 
   Widget _buildFinalFooter(ColorScheme colorScheme, Color accent) {
+    final brandName = (invoice['brandName'] as String? ?? '').toUpperCase();
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -627,7 +661,7 @@ class InvoicePreviewWidget extends StatelessWidget {
           ),
         ),
         Text(
-          invoice.brandName.toUpperCase(),
+          brandName,
           style: TextStyle(
             color: colorScheme.onSurface,
             fontSize: 11,
@@ -639,4 +673,3 @@ class InvoicePreviewWidget extends StatelessWidget {
     );
   }
 }
-

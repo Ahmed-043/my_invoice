@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../core/database/invoice_repository.dart';
-import '../../core/models/client_model.dart';
 
 class ClientDirectoryScreen extends StatefulWidget {
-  /// When true, tapping a client will `pop()` the selected [Client] instead of opening edit.
+  /// When true, tapping a client will `pop()` the selected client map instead of opening edit.
   /// Editing remains available via the edit icon.
   final bool selectionMode;
 
@@ -14,8 +12,8 @@ class ClientDirectoryScreen extends StatefulWidget {
 }
 
 class _ClientDirectoryScreenState extends State<ClientDirectoryScreen> {
-  final repo = InvoiceRepository();
-  List<Client> clients = [];
+  List<Map<String, dynamic>> clients = [];
+  List<Map<String, dynamic>> filteredClients = [];
   final searchController = TextEditingController();
 
   @override
@@ -30,21 +28,27 @@ class _ClientDirectoryScreenState extends State<ClientDirectoryScreen> {
     super.dispose();
   }
 
-  Future<void> loadClients({String query = ''}) async {
+  void loadClients({String query = ''}) {
     if (query.trim().isEmpty) {
-      clients = await repo.getClients();
+      filteredClients = List.from(clients);
     } else {
-      clients = await repo.searchClients(query.trim());
+      final q = query.trim().toLowerCase();
+      filteredClients = clients.where((c) {
+        final name = (c['name'] as String? ?? '').toLowerCase();
+        final company = (c['companyName'] as String? ?? '').toLowerCase();
+        final email = (c['email'] as String? ?? '').toLowerCase();
+        return name.contains(q) || company.contains(q) || email.contains(q);
+      }).toList();
     }
     if (mounted) setState(() {});
   }
 
-  void _showAddEditClientDialog({Client? client}) {
-    final nameController = TextEditingController(text: client?.name ?? '');
-    final companyController = TextEditingController(text: client?.companyName ?? '');
-    final emailController = TextEditingController(text: client?.email ?? '');
-    final phoneController = TextEditingController(text: client?.phone ?? '');
-    final addressController = TextEditingController(text: client?.address ?? '');
+  void _showAddEditClientDialog({Map<String, dynamic>? client}) {
+    final nameController = TextEditingController(text: client?['name'] as String? ?? '');
+    final companyController = TextEditingController(text: client?['companyName'] as String? ?? '');
+    final emailController = TextEditingController(text: client?['email'] as String? ?? '');
+    final phoneController = TextEditingController(text: client?['phone'] as String? ?? '');
+    final addressController = TextEditingController(text: client?['address'] as String? ?? '');
     final formKey = GlobalKey<FormState>();
 
     showDialog(
@@ -98,27 +102,28 @@ class _ClientDirectoryScreenState extends State<ClientDirectoryScreen> {
             child: const Text("Cancel"),
           ),
           TextButton(
-            onPressed: () async {
+            onPressed: () {
               if (formKey.currentState!.validate()) {
-                final newClient = Client(
-                  id: client?.id,
-                  name: nameController.text.trim(),
-                  companyName: companyController.text.trim(),
-                  email: emailController.text.trim(),
-                  phone: phoneController.text.trim(),
-                  address: addressController.text.trim(),
-                );
+                final newClient = {
+                  'id': client?['id'] ?? DateTime.now().millisecondsSinceEpoch,
+                  'name': nameController.text.trim(),
+                  'companyName': companyController.text.trim(),
+                  'email': emailController.text.trim(),
+                  'phone': phoneController.text.trim(),
+                  'address': addressController.text.trim(),
+                };
 
                 if (client == null) {
-                  await repo.insertClient(newClient);
+                  clients.add(newClient);
                 } else {
-                  await repo.updateClient(newClient);
+                  final index = clients.indexWhere((c) => c['id'] == client['id']);
+                  if (index != -1) {
+                    clients[index] = newClient;
+                  }
                 }
 
-                if (mounted) {
-                  Navigator.pop(context);
-                  loadClients(query: searchController.text);
-                }
+                Navigator.pop(context);
+                loadClients(query: searchController.text);
               }
             },
             child: const Text("Save"),
@@ -157,7 +162,7 @@ class _ClientDirectoryScreenState extends State<ClientDirectoryScreen> {
             ),
           ),
           Expanded(
-            child: clients.isEmpty
+            child: filteredClients.isEmpty
                 ? Center(
                     child: Text(
                       searchController.text.isEmpty
@@ -167,10 +172,15 @@ class _ClientDirectoryScreenState extends State<ClientDirectoryScreen> {
                     ),
                   )
                 : ListView.builder(
-                    itemCount: clients.length,
+                    itemCount: filteredClients.length,
                     padding: const EdgeInsets.only(bottom: 80),
                     itemBuilder: (context, index) {
-                      final client = clients[index];
+                      final client = filteredClients[index];
+                      final name = client['name'] as String? ?? '';
+                      final companyName = client['companyName'] as String? ?? '';
+                      final email = client['email'] as String? ?? '';
+                      final phone = client['phone'] as String? ?? '';
+
                       return Card(
                         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                         shape: RoundedRectangleBorder(
@@ -179,51 +189,51 @@ class _ClientDirectoryScreenState extends State<ClientDirectoryScreen> {
                         child: ListTile(
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           leading: CircleAvatar(
-                            backgroundColor: colorScheme.primary.withOpacity(0.1),
+                            backgroundColor: colorScheme.primary.withValues(alpha: 0.1),
                             foregroundColor: colorScheme.primary,
                             child: Text(
-                              client.name.isNotEmpty ? client.name[0].toUpperCase() : 'C',
+                              name.isNotEmpty ? name[0].toUpperCase() : 'C',
                               style: const TextStyle(fontWeight: FontWeight.bold),
                             ),
                           ),
                           title: Text(
-                            client.name,
+                            name,
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                           ),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (client.companyName.isNotEmpty) ...[
+                              if (companyName.isNotEmpty) ...[
                                 const SizedBox(height: 4),
                                 Row(
                                   children: [
                                     const Icon(Icons.business_rounded, size: 14, color: Colors.grey),
                                     const SizedBox(width: 6),
-                                    Text(client.companyName),
+                                    Text(companyName),
                                   ],
                                 ),
                               ],
-                              if (client.email.isNotEmpty || client.phone.isNotEmpty) ...[
+                              if (email.isNotEmpty || phone.isNotEmpty) ...[
                                 const SizedBox(height: 4),
                                 Row(
                                   children: [
-                                    if (client.email.isNotEmpty) ...[
+                                    if (email.isNotEmpty) ...[
                                       const Icon(Icons.email_outlined, size: 14, color: Colors.grey),
                                       const SizedBox(width: 4),
                                       Expanded(
                                         child: Text(
-                                          client.email,
+                                          email,
                                           overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(fontSize: 12),
                                         ),
                                       ),
                                     ],
-                                    if (client.phone.isNotEmpty) ...[
+                                    if (phone.isNotEmpty) ...[
                                       const SizedBox(width: 12),
                                       const Icon(Icons.phone_outlined, size: 14, color: Colors.grey),
                                       const SizedBox(width: 4),
                                       Text(
-                                        client.phone,
+                                        phone,
                                         style: const TextStyle(fontSize: 12),
                                       ),
                                     ],
@@ -244,21 +254,19 @@ class _ClientDirectoryScreenState extends State<ClientDirectoryScreen> {
                                 onPressed: () {
                                   showDialog(
                                     context: context,
-                                    builder: (context) => AlertDialog(
+                                    builder: (dialogContext) => AlertDialog(
                                       title: const Text("Delete Client"),
-                                      content: Text("Are you sure you want to delete ${client.name}?"),
+                                      content: Text("Are you sure you want to delete $name?"),
                                       actions: [
                                         TextButton(
-                                          onPressed: () => Navigator.pop(context),
+                                          onPressed: () => Navigator.pop(dialogContext),
                                           child: const Text("Cancel"),
                                         ),
                                         TextButton(
-                                          onPressed: () async {
-                                            await repo.deleteClient(client.id ?? 0);
-                                            if (mounted) {
-                                              Navigator.pop(context);
-                                              loadClients(query: searchController.text);
-                                            }
+                                          onPressed: () {
+                                            clients.removeWhere((c) => c['id'] == client['id']);
+                                            Navigator.pop(dialogContext);
+                                            loadClients(query: searchController.text);
                                           },
                                           child: const Text("Delete", style: TextStyle(color: Colors.red)),
                                         ),

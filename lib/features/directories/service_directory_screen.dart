@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../core/database/invoice_repository.dart';
-import '../../core/models/predefined_service_model.dart';
 
 class ServiceDirectoryScreen extends StatefulWidget {
-  /// When true, tapping a service will `pop()` the selected [PredefinedService] instead of opening edit.
+  /// When true, tapping a service will `pop()` the selected service map instead of opening edit.
   /// Editing remains available via the edit icon.
   final bool selectionMode;
 
@@ -14,8 +12,8 @@ class ServiceDirectoryScreen extends StatefulWidget {
 }
 
 class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
-  final repo = InvoiceRepository();
-  List<PredefinedService> services = [];
+  List<Map<String, dynamic>> services = [];
+  List<Map<String, dynamic>> filteredServices = [];
   final searchController = TextEditingController();
 
   @override
@@ -30,19 +28,26 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
     super.dispose();
   }
 
-  Future<void> loadServices({String query = ''}) async {
+  void loadServices({String query = ''}) {
     if (query.trim().isEmpty) {
-      services = await repo.getPredefinedServices();
+      filteredServices = List.from(services);
     } else {
-      services = await repo.searchPredefinedServices(query.trim());
+      final q = query.trim().toLowerCase();
+      filteredServices = services.where((s) {
+        final name = (s['name'] as String? ?? '').toLowerCase();
+        final description = (s['description'] as String? ?? '').toLowerCase();
+        return name.contains(q) || description.contains(q);
+      }).toList();
     }
     if (mounted) setState(() {});
   }
 
-  void _showAddEditServiceDialog({PredefinedService? service}) {
-    final nameController = TextEditingController(text: service?.name ?? '');
-    final descriptionController = TextEditingController(text: service?.description ?? '');
-    final priceController = TextEditingController(text: service != null ? service.defaultPrice.toStringAsFixed(2) : '');
+  void _showAddEditServiceDialog({Map<String, dynamic>? service}) {
+    final nameController = TextEditingController(text: service?['name'] as String? ?? '');
+    final descriptionController = TextEditingController(text: service?['description'] as String? ?? '');
+    final priceController = TextEditingController(
+      text: service != null ? ((service['defaultPrice'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(2) : '',
+    );
     final formKey = GlobalKey<FormState>();
 
     showDialog(
@@ -89,25 +94,26 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
             child: const Text("Cancel"),
           ),
           TextButton(
-            onPressed: () async {
+            onPressed: () {
               if (formKey.currentState!.validate()) {
-                final newService = PredefinedService(
-                  id: service?.id,
-                  name: nameController.text.trim(),
-                  description: descriptionController.text.trim(),
-                  defaultPrice: double.parse(priceController.text.trim()),
-                );
+                final newService = {
+                  'id': service?['id'] ?? DateTime.now().millisecondsSinceEpoch,
+                  'name': nameController.text.trim(),
+                  'description': descriptionController.text.trim(),
+                  'defaultPrice': double.parse(priceController.text.trim()),
+                };
 
                 if (service == null) {
-                  await repo.insertPredefinedService(newService);
+                  services.add(newService);
                 } else {
-                  await repo.updatePredefinedService(newService);
+                  final index = services.indexWhere((s) => s['id'] == service['id']);
+                  if (index != -1) {
+                    services[index] = newService;
+                  }
                 }
 
-                if (mounted) {
-                  Navigator.pop(context);
-                  loadServices(query: searchController.text);
-                }
+                Navigator.pop(context);
+                loadServices(query: searchController.text);
               }
             },
             child: const Text("Save"),
@@ -146,7 +152,7 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
             ),
           ),
           Expanded(
-            child: services.isEmpty
+            child: filteredServices.isEmpty
                 ? Center(
                     child: Text(
                       searchController.text.isEmpty
@@ -156,10 +162,14 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
                     ),
                   )
                 : ListView.builder(
-                    itemCount: services.length,
+                    itemCount: filteredServices.length,
                     padding: const EdgeInsets.only(bottom: 80),
                     itemBuilder: (context, index) {
-                      final service = services[index];
+                      final service = filteredServices[index];
+                      final name = service['name'] as String? ?? '';
+                      final description = service['description'] as String? ?? '';
+                      final defaultPrice = (service['defaultPrice'] as num?)?.toDouble() ?? 0.0;
+
                       return Card(
                         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                         shape: RoundedRectangleBorder(
@@ -168,17 +178,17 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
                         child: ListTile(
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           leading: CircleAvatar(
-                            backgroundColor: colorScheme.secondary.withOpacity(0.1),
+                            backgroundColor: colorScheme.secondary.withValues(alpha: 0.1),
                             foregroundColor: colorScheme.secondary,
                             child: const Icon(Icons.design_services_outlined),
                           ),
                           title: Text(
-                            service.name,
+                            name,
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                           ),
-                          subtitle: service.description.isNotEmpty
+                          subtitle: description.isNotEmpty
                               ? Text(
-                                  service.description,
+                                  description,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 )
@@ -187,7 +197,7 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(
-                                "Rs ${service.defaultPrice.toStringAsFixed(0)}",
+                                "Rs ${defaultPrice.toStringAsFixed(0)}",
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   color: colorScheme.primary,
@@ -204,21 +214,19 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
                                 onPressed: () {
                                   showDialog(
                                     context: context,
-                                    builder: (context) => AlertDialog(
+                                    builder: (dialogContext) => AlertDialog(
                                       title: const Text("Delete Service"),
-                                      content: Text("Are you sure you want to delete ${service.name}?"),
+                                      content: Text("Are you sure you want to delete $name?"),
                                       actions: [
                                         TextButton(
-                                          onPressed: () => Navigator.pop(context),
+                                          onPressed: () => Navigator.pop(dialogContext),
                                           child: const Text("Cancel"),
                                         ),
                                         TextButton(
-                                          onPressed: () async {
-                                            await repo.deletePredefinedService(service.id ?? 0);
-                                            if (mounted) {
-                                              Navigator.pop(context);
-                                              loadServices(query: searchController.text);
-                                            }
+                                          onPressed: () {
+                                            services.removeWhere((s) => s['id'] == service['id']);
+                                            Navigator.pop(dialogContext);
+                                            loadServices(query: searchController.text);
                                           },
                                           child: const Text("Delete", style: TextStyle(color: Colors.red)),
                                         ),
