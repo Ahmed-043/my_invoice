@@ -9,6 +9,9 @@ import '../../core/models/invoice_model.dart';
 import '../../core/theme/theme_provider.dart';
 import '../invoice_form/invoice_form_screen.dart';
 import '../invoice_view/invoice_preview_screen.dart'; // Assuming this is the correct import name
+import '../directories/client_directory_screen.dart';
+import '../directories/service_directory_screen.dart';
+import 'widgets/financial_summary_dashboard.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -24,6 +27,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   List<String> displayOrder = [];
   Map<String, List<Invoice>> grouped = {};
+
+  double totalReceived = 0.0;
+  double totalReceivables = 0.0;
+  int overdueCount = 0;
+  double collectionProgress = 0.0;
 
   @override
   void initState() {
@@ -44,7 +52,42 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       allInvoices = await repo.searchInvoices(query.trim());
     }
 
+    _calculateStats();
     await _groupAndSort();
+  }
+
+  void _calculateStats() {
+    double received = 0.0;
+    double unpaid = 0.0;
+    int overdue = 0;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final inputFormat = DateFormat("d MMM yyyy");
+
+    for (var inv in allInvoices) {
+      received += inv.paidAmount;
+      unpaid += (inv.total - inv.paidAmount);
+
+      if (inv.status.toLowerCase() != 'paid') {
+        try {
+          final dueDate = inputFormat.parse(inv.dueDate);
+          final dueDay = DateTime(dueDate.year, dueDate.month, dueDate.day);
+          if (dueDay.isBefore(today)) {
+            overdue++;
+          }
+        } catch (e) {
+          // ignore parsing error
+        }
+      }
+    }
+
+    totalReceived = received;
+    totalReceivables = unpaid;
+    overdueCount = overdue;
+
+    final totalVolume = totalReceived + totalReceivables;
+    collectionProgress = totalVolume > 0 ? (totalReceived / totalVolume) : 0.0;
   }
 
   Future<void> _groupAndSort() async {
@@ -420,6 +463,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     _showSnackbar(context, result ?? "Import task finished");
                   }
                   break;
+
+                case 'clients':
+                  if (!mounted) return;
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ClientDirectoryScreen()),
+                  );
+                  await loadData(query: searchController.text);
+                  break;
+
+                case 'services':
+                  if (!mounted) return;
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ServiceDirectoryScreen()),
+                  );
+                  await loadData(query: searchController.text);
+                  break;
               }
             },
             itemBuilder: (BuildContext context) => [
@@ -430,6 +491,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     Icon(Icons.brightness_6, size: 20),
                     SizedBox(width: 10),
                     Text("Toggle Theme"),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'clients',
+                child: Row(
+                  children: [
+                    Icon(Icons.people_outline, size: 20),
+                    SizedBox(width: 10),
+                    Text("Client Directory"),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'services',
+                child: Row(
+                  children: [
+                    Icon(Icons.design_services_outlined, size: 20),
+                    SizedBox(width: 10),
+                    Text("Service Directory"),
                   ],
                 ),
               ),
@@ -459,6 +540,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       body: Column(
         children: [
+          FinancialSummaryDashboard(
+            hasInvoices: allInvoices.isNotEmpty,
+            collectionProgress: collectionProgress,
+            totalReceived: totalReceived,
+            totalReceivables: totalReceivables,
+            overdueCount: overdueCount,
+          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: TextField(
@@ -479,30 +567,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           Expanded(
             child: allInvoices.isEmpty
                 ? const Center(
-              child: Text(
-                "No invoices yet",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
-              ),
-            )
+                    child: Text(
+                      "No invoices yet",
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                    ),
+                  )
                 : displayOrder.isEmpty
-                ? const Center(child: Text("Loading clients..."))
-                : ReorderableListView(
-              padding: const EdgeInsets.only(bottom: 100),
-              onReorder: (oldIndex, newIndex) async {
-                setState(() {
-                  if (newIndex > oldIndex) {
-                    newIndex -= 1;
-                  }
-                  final item = displayOrder.removeAt(oldIndex);
-                  displayOrder.insert(newIndex, item);
-                });
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setStringList('savedClientNames', displayOrder);
-              },
-              children: displayOrder.map((client) {
-                return _buildClientExpansionTile(client);
-              }).toList(),
-            ),
+                    ? const Center(child: Text("Loading clients..."))
+                    : ReorderableListView(
+                        padding: const EdgeInsets.only(bottom: 100),
+                        onReorder: (oldIndex, newIndex) async {
+                          setState(() {
+                            if (newIndex > oldIndex) {
+                              newIndex -= 1;
+                            }
+                            final item = displayOrder.removeAt(oldIndex);
+                            displayOrder.insert(newIndex, item);
+                          });
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.setStringList('savedClientNames', displayOrder);
+                        },
+                        children: displayOrder.map((client) {
+                          return _buildClientExpansionTile(client);
+                        }).toList(),
+                      ),
           ),
         ],
       ),

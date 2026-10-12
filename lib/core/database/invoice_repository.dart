@@ -7,13 +7,16 @@ import 'package:share_plus/share_plus.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/invoice_model.dart';
 import '../models/service_model.dart';
+import '../models/client_model.dart';
+import '../models/predefined_service_model.dart';
 import 'database_service.dart';
 
 class InvoiceRepository {
+  // ─── INVOICES ──────────────────────────────────────────────────────────────
+
   Future<int> insertInvoice(Invoice invoice) async {
     final db = await DatabaseService.database;
 
-    // Create a copy of the map so we don't accidentally mutate the original object's state
     final Map<String, dynamic> row = invoice.toMap();
 
     if (row['client_name'] is String) {
@@ -61,13 +64,10 @@ class InvoiceRepository {
     );
     return result.map((e) => ServiceItem.fromMap(e)).toList();
   }
-  /// Records a payment or refund.
-  /// - Positive amount: adds payment received (capped at total)
-  /// - Negative amount: deducts/refunds (capped so paid_amount never goes below 0)
+
   Future<void> recordPayment(int invoiceId, double amount) async {
     final db = await DatabaseService.database;
 
-    // 1. Get current invoice data
     final result = await db.query(
       'invoices',
       where: 'id = ?',
@@ -83,13 +83,9 @@ class InvoiceRepository {
     final currentPaid = (map['paid_amount'] as num?)?.toDouble() ?? 0.0;
     final total = (map['total'] as num?)?.toDouble() ?? 0.0;
 
-    // 2. Calculate new paid amount with caps
     double newPaid = currentPaid + amount;
-
-    // Cap: never go below 0 or above total
     newPaid = newPaid.clamp(0.0, total);
 
-    // 3. Determine new status
     String newStatus;
     if (newPaid >= total) {
       newStatus = 'paid';
@@ -99,7 +95,6 @@ class InvoiceRepository {
       newStatus = 'pending';
     }
 
-    // 4. Update database
     await db.update(
       'invoices',
       {
@@ -111,7 +106,6 @@ class InvoiceRepository {
     );
   }
 
-  /// Optional: Mark invoice as fully paid (sets paid_amount = total)
   Future<void> markInvoiceAsPaid(int invoiceId) async {
     final db = await DatabaseService.database;
     await db.update(
@@ -125,80 +119,22 @@ class InvoiceRepository {
     );
   }
 
-  Future<File> _getInternalDbFile() async {
-    final directory = await getApplicationDocumentsDirectory();
-    return File(join(directory.path, "invoixa.db"));
-  }
-
-  /// EXPORT: Copies 'invoixa.db' to a location of the user's choice
-  Future<String?> exportDatabase() async {
-    try {
-      // 1. Locate the internal database
-      final docDir = await getApplicationDocumentsDirectory();
-      final sourceFile = File(join(docDir.path, "invoixa.db"));
-
-      if (!await sourceFile.exists()) return "Database not found.";
-
-      // 2. Copy to Temporary Directory (The "Neutral Zone")
-      // This solves the permission issue where the system can't see internal app docs
-      final tempDir = await getTemporaryDirectory();
-      final tempFile = File(join(tempDir.path, "invoixa_backup.db"));
-
-      // Write the bytes to the temp location
-      await tempFile.writeAsBytes(await sourceFile.readAsBytes());
-
-      // 3. Share from the Temp location
-      final result = await Share.shareXFiles(
-        [XFile(tempFile.path)],
-        subject: 'Invoixa Backup',
-      );
-
-      // 4. Clean up the temp file after sharing
-      if (await tempFile.exists()) {
-        await tempFile.delete();
-      }
-
-      if (result.status == ShareResultStatus.dismissed) return "Export cancelled";
-      return "Export complete!";
-    } catch (e) {
-      return "Permission or Export Error: $e";
-    }
-  }
-  /// IMPORT: Overwrites 'invoixa.db' with a file selected by the user
-  Future<String?> importDatabase() async {
-    try {
-      // 1. Pick the backup file
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.any,
-        allowMultiple: false,
-      );
-
-      if (result == null || result.files.single.path == null) {
-        return "Import cancelled";
-      }
-
-      File backupFile = File(result.files.single.path!);
-      File internalDbFile = await _getInternalDbFile();
-
-      // 2. Safely close the database connection before overwriting
-      final db = await DatabaseService.database;
-      if (db.isOpen) {
-        await db.close();
-      }
-
-      // 3. Overwrite internal file
-      await backupFile.copy(internalDbFile.path);
-
-      return "Database restored successfully! Please restart the app.";
-    } catch (e) {
-      return "Import failed: $e";
-    }
+  Future<void> updateInvoiceStyles(int invoiceId, String templateStyle, String accentColor) async {
+    final db = await DatabaseService.database;
+    await db.update(
+      'invoices',
+      {
+        'template_style': templateStyle,
+        'accent_color': accentColor,
+      },
+      where: 'id = ?',
+      whereArgs: [invoiceId],
+    );
   }
 
   Future<int> getClientInvoiceSequence(int invoiceId, String clientName) async {
     final db = await DatabaseService.database;
 
-    // Counts all invoices for this client that have an ID less than or equal to this one
     final result = await db.rawQuery(
       '''
     SELECT COUNT(*) as count 
@@ -214,21 +150,174 @@ class InvoiceRepository {
   Future<void> deleteInvoice(int invoiceId) async {
     final db = await DatabaseService.database;
 
-    // Use a transaction to ensure both happen, or neither happens
     await db.transaction((txn) async {
-      // 1. Delete all services linked to this invoice
       await txn.delete(
         'services',
         where: 'invoice_id = ?',
         whereArgs: [invoiceId],
       );
 
-      // 2. Delete the invoice itself
       await txn.delete(
         'invoices',
         where: 'id = ?',
         whereArgs: [invoiceId],
       );
     });
+  }
+
+  // ─── CLIENTS DIRECTORY ──────────────────────────────────────────────────────
+
+  Future<List<Client>> getClients() async {
+    final db = await DatabaseService.database;
+    final result = await db.query("clients", orderBy: "name ASC");
+    return result.map((e) => Client.fromMap(e)).toList();
+  }
+
+  Future<List<Client>> searchClients(String query) async {
+    final db = await DatabaseService.database;
+    final result = await db.query(
+      "clients",
+      where: "name LIKE ? OR company_name LIKE ? OR email LIKE ?",
+      whereArgs: ["%$query%", "%$query%", "%$query%"],
+      orderBy: "name ASC",
+    );
+    return result.map((e) => Client.fromMap(e)).toList();
+  }
+
+  Future<int> insertClient(Client client) async {
+    final db = await DatabaseService.database;
+    return await db.insert(
+      "clients",
+      client.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<int> updateClient(Client client) async {
+    final db = await DatabaseService.database;
+    return await db.update(
+      "clients",
+      client.toMap(),
+      where: "id = ?",
+      whereArgs: [client.id],
+    );
+  }
+
+  Future<int> deleteClient(int id) async {
+    final db = await DatabaseService.database;
+    return await db.delete(
+      "clients",
+      where: "id = ?",
+      whereArgs: [id],
+    );
+  }
+
+  // ─── PREDEFINED SERVICES DIRECTORY ──────────────────────────────────────────
+
+  Future<List<PredefinedService>> getPredefinedServices() async {
+    final db = await DatabaseService.database;
+    final result = await db.query("predefined_services", orderBy: "name ASC");
+    return result.map((e) => PredefinedService.fromMap(e)).toList();
+  }
+
+  Future<List<PredefinedService>> searchPredefinedServices(String query) async {
+    final db = await DatabaseService.database;
+    final result = await db.query(
+      "predefined_services",
+      where: "name LIKE ? OR description LIKE ?",
+      whereArgs: ["%$query%", "%$query%"],
+      orderBy: "name ASC",
+    );
+    return result.map((e) => PredefinedService.fromMap(e)).toList();
+  }
+
+  Future<int> insertPredefinedService(PredefinedService service) async {
+    final db = await DatabaseService.database;
+    return await db.insert(
+      "predefined_services",
+      service.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<int> updatePredefinedService(PredefinedService service) async {
+    final db = await DatabaseService.database;
+    return await db.update(
+      "predefined_services",
+      service.toMap(),
+      where: "id = ?",
+      whereArgs: [service.id],
+    );
+  }
+
+  Future<int> deletePredefinedService(int id) async {
+    final db = await DatabaseService.database;
+    return await db.delete(
+      "predefined_services",
+      where: "id = ?",
+      whereArgs: [id],
+    );
+  }
+
+  // ─── DATABASE EXPORT & IMPORT ──────────────────────────────────────────────
+
+  Future<File> _getInternalDbFile() async {
+    final directory = await getApplicationDocumentsDirectory();
+    return File(join(directory.path, "invoixa.db"));
+  }
+
+  Future<String?> exportDatabase() async {
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final sourceFile = File(join(docDir.path, "invoixa.db"));
+
+      if (!await sourceFile.exists()) return "Database not found.";
+
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File(join(tempDir.path, "invoixa_backup.db"));
+
+      await tempFile.writeAsBytes(await sourceFile.readAsBytes());
+
+      final result = await Share.shareXFiles(
+        [XFile(tempFile.path)],
+        subject: 'Invoixa Backup',
+      );
+
+      if (await tempFile.exists()) {
+        await tempFile.delete();
+      }
+
+      if (result.status == ShareResultStatus.dismissed) return "Export cancelled";
+      return "Export complete!";
+    } catch (e) {
+      return "Permission or Export Error: $e";
+    }
+  }
+
+  Future<String?> importDatabase() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        allowMultiple: false,
+      );
+
+      if (result == null || result.files.single.path == null) {
+        return "Import cancelled";
+      }
+
+      File backupFile = File(result.files.single.path!);
+      File internalDbFile = await _getInternalDbFile();
+
+      final db = await DatabaseService.database;
+      if (db.isOpen) {
+        await db.close();
+      }
+
+      await backupFile.copy(internalDbFile.path);
+
+      return "Database restored successfully! Please restart the app.";
+    } catch (e) {
+      return "Import failed: $e";
+    }
   }
 }

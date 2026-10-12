@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
@@ -15,10 +16,13 @@ import 'package:super_clipboard/super_clipboard.dart';
 import '../../core/database/invoice_repository.dart';
 import '../../core/models/invoice_model.dart';
 import '../../core/models/service_model.dart';
+import '../../core/theme/theme_provider.dart';
+import '../invoice_form/widgets/accent_color_dot.dart';
+import '../invoice_form/widgets/invoice_template_card.dart';
 import 'delete_dialog.dart';
 import 'invoice_preview_widget.dart';
 
-class InvoiceViewScreen extends StatefulWidget {
+class InvoiceViewScreen extends ConsumerStatefulWidget {
   final Invoice invoice;
   final List<ServiceItem> services;
   final int clientInvoiceSequence;
@@ -32,14 +36,210 @@ class InvoiceViewScreen extends StatefulWidget {
   });
 
   @override
-  State<InvoiceViewScreen> createState() => _InvoiceViewScreenState();
+  ConsumerState<InvoiceViewScreen> createState() => _InvoiceViewScreenState();
 }
 
-class _InvoiceViewScreenState extends State<InvoiceViewScreen> {
+class _InvoiceViewScreenState extends ConsumerState<InvoiceViewScreen> {
   final GlobalKey invoiceKey = GlobalKey();
   bool isLoading = false;
   late bool showTracking =  false;
   late int clientInvoiceSequence = widget.clientInvoiceSequence;
+  late Invoice currentInvoice;
+
+  @override
+  void initState() {
+    super.initState();
+    currentInvoice = widget.invoice;
+  }
+
+  Future<void> _updateStyles(String templateStyle, String accentColor) async {
+    setState(() {
+      currentInvoice = currentInvoice.copyWith(
+        templateStyle: templateStyle,
+        accentColor: accentColor,
+      );
+    });
+
+    final repo = InvoiceRepository();
+    if (currentInvoice.id != null) {
+      await repo.updateInvoiceStyles(currentInvoice.id!, templateStyle, accentColor);
+    }
+    widget.callBack.call();
+  }
+
+  void _showStyleBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Consumer(
+          builder: (context, ref, child) {
+            final themeMode = ref.watch(themeProvider);
+            final isDark = themeMode == ThemeMode.dark;
+
+            return Material(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              child: StatefulBuilder(
+                builder: (context, setModalState) {
+                  return Container(
+                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 40,
+                            height: 4,
+                            margin: const EdgeInsets.only(bottom: 20),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text("Customize Invoice", style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () => Navigator.pop(context),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text("Dark Mode", style: Theme.of(context).textTheme.titleMedium),
+                            Switch(
+                              value: isDark,
+                              onChanged: (val) {
+                                ref.read(themeProvider.notifier).toggleTheme();
+                                // No need for setModalState for theme as Consumer handles it
+                              },
+                            ),
+                          ],
+                        ),
+                        const Divider(height: 32),
+                        Text("Template Design", style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: InvoiceTemplateCard(
+                              label: "Classic",
+                              description: "Minimalist",
+                              icon: Icons.border_all_rounded,
+                              isSelected: currentInvoice.templateStyle == 'classic',
+                              onSelected: () {
+                                _updateStyles('classic', currentInvoice.accentColor);
+                                setModalState(() {});
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: InvoiceTemplateCard(
+                              label: "Modern",
+                              description: "Professional",
+                              icon: Icons.dashboard_rounded,
+                              isSelected: currentInvoice.templateStyle == 'modern',
+                              onSelected: () {
+                                _updateStyles('modern', currentInvoice.accentColor);
+                                setModalState(() {});
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: InvoiceTemplateCard(
+                              label: "Bold",
+                              description: "Editorial",
+                              icon: Icons.view_headline_rounded,
+                              isSelected: currentInvoice.templateStyle == 'bold',
+                              onSelected: () {
+                                _updateStyles('bold', currentInvoice.accentColor);
+                                setModalState(() {});
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      Text("Accent Color", style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 12),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            AccentColorDot(
+                              color: Colors.blueGrey,
+                              label: 'Slate',
+                              isSelected: currentInvoice.accentColor == 'default',
+                              onSelected: () {
+                                _updateStyles(currentInvoice.templateStyle, 'default');
+                                setModalState(() {});
+                              },
+                            ),
+                            AccentColorDot(
+                              color: Colors.indigo,
+                              label: 'Blue',
+                              isSelected: currentInvoice.accentColor == 'blue',
+                              onSelected: () {
+                                _updateStyles(currentInvoice.templateStyle, 'blue');
+                                setModalState(() {});
+                              },
+                            ),
+                            AccentColorDot(
+                              color: Colors.teal,
+                              label: 'Green',
+                              isSelected: currentInvoice.accentColor == 'green',
+                              onSelected: () {
+                                _updateStyles(currentInvoice.templateStyle, 'green');
+                                setModalState(() {});
+                              },
+                            ),
+                            AccentColorDot(
+                              color: Colors.amber[700]!,
+                              label: 'Gold',
+                              isSelected: currentInvoice.accentColor == 'gold',
+                              onSelected: () {
+                                _updateStyles(currentInvoice.templateStyle, 'gold');
+                                setModalState(() {});
+                              },
+                            ),
+                            AccentColorDot(
+                              color: Colors.deepOrangeAccent,
+                              label: 'Red',
+                              isSelected: currentInvoice.accentColor == 'red',
+                              onSelected: () {
+                                _updateStyles(currentInvoice.templateStyle, 'red');
+                                setModalState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          );
+        },
+      );
+    },
+  );
+}
 
   Future<Uint8List?> _cropCaptureInvoice() async {
     try {
@@ -190,6 +390,14 @@ class _InvoiceViewScreenState extends State<InvoiceViewScreen> {
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: IconButton(
+              icon: const Icon(Icons.palette_outlined),
+              tooltip: "Edit Style",
+              onPressed: _showStyleBottomSheet,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: IconButton(
               icon: const Icon(Icons.delete_outline_rounded),
               onPressed: () {
                 showDialog(
@@ -239,7 +447,7 @@ class _InvoiceViewScreenState extends State<InvoiceViewScreen> {
                           child: RepaintBoundary(
                             key: invoiceKey,
                             child: InvoicePreviewWidget(
-                              invoice: widget.invoice,
+                              invoice: currentInvoice,
                               services: widget.services,
                               clientInvoiceSequence: clientInvoiceSequence,
                               showTracking: showTracking,

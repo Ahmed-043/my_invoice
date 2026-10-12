@@ -6,6 +6,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/database/invoice_repository.dart';
 import '../../core/models/invoice_model.dart';
 import '../../core/models/service_model.dart';
+import '../../core/models/client_model.dart';
+import '../../core/models/predefined_service_model.dart';
+import '../directories/client_directory_screen.dart';
+import '../directories/service_directory_screen.dart';
+import 'widgets/accent_color_dot.dart';
+import 'widgets/addable_autocomplete_field.dart';
+import 'widgets/invoice_form_section_card.dart';
+import 'widgets/invoice_template_card.dart';
+import 'widgets/labeled_text_field.dart';
 
 class InvoiceFormScreen extends StatefulWidget {
   const InvoiceFormScreen({super.key});
@@ -79,6 +88,8 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
   String currencyCode = "PKR";
   String status = "Pending";
   String penaltyType = "%";
+  String templateStyle = "classic";
+  String accentColor = "default";
 
   DateTime issuedDate = DateTime.now();
   DateTime dueDate = DateTime.now().add(const Duration(days: 7));
@@ -158,42 +169,58 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _loadLastInvoiceData() async {
+  List<Client> _dbClients = [];
+  List<PredefinedService> _dbServices = [];
+
+  Future<void> _loadAutocompleteLists() async {
     final prefs = await SharedPreferences.getInstance();
 
-    setState(() {
-      _clientNames = prefs.getStringList("savedClientNames") ?? [];
-      _yourNames = prefs.getStringList("savedYourNames") ?? [];
-      _brandNames = prefs.getStringList("savedBrandNames") ?? [];
-      _accounts = prefs.getStringList("savedAccounts") ?? [];
-      _emails = prefs.getStringList("savedEmails") ?? [];
-      _phones = prefs.getStringList("savedPhones") ?? [];
-      _serviceNames = prefs.getStringList("savedServiceNames") ?? [];
+    _dbClients = await repo.getClients();
+    _dbServices = await repo.getPredefinedServices();
 
-      clientController.text = "";
-      yourNameController.text = prefs.getString("yourName") ?? "";
-      brandController.text = prefs.getString("brandName") ?? "";
-      accountController.text = prefs.getString("accountNo") ?? "";
-      emailController.text = prefs.getString("email") ?? "";
-      phoneController.text = prefs.getString("phone") ?? "";
-      penaltyController.text = prefs.getString("penaltyValue") ?? "0";
+    if (mounted) {
+      setState(() {
+        _clientNames = _dbClients.map((c) => c.name).toList();
+        _yourNames = prefs.getStringList("savedYourNames") ?? [];
+        _brandNames = prefs.getStringList("savedBrandNames") ?? [];
+        _accounts = prefs.getStringList("savedAccounts") ?? [];
+        _emails = prefs.getStringList("savedEmails") ?? [];
+        _phones = prefs.getStringList("savedPhones") ?? [];
+        _serviceNames = prefs.getStringList("savedServiceNames") ?? [];
 
-      final savedMethods = prefs.getStringList("savedPaymentMethods") ?? [];
-      final allMethods = [...["Bank Transfer", "Cash", "EasyPaisa", "JazzCash"], ...savedMethods]
-          .toSet()
-          .toList()
-        ..sort();
+        final savedMethods = prefs.getStringList("savedPaymentMethods") ?? [];
+        _paymentMethods = [...["Bank Transfer", "Cash", "EasyPaisa", "JazzCash"], ...savedMethods]
+            .toSet()
+            .toList()
+          ..sort();
+      });
+    }
+  }
 
-      final savedPayment = prefs.getString("paymentMethod") ?? "Bank Transfer";
-      _paymentMethods = allMethods;
-      _selectedPayment = allMethods.contains(savedPayment) ? savedPayment : "Bank Transfer";
-      _paymentController.text = _selectedPayment;
+  Future<void> _loadLastInvoiceData() async {
+    await _loadAutocompleteLists();
+    final prefs = await SharedPreferences.getInstance();
 
-      final savedPenaltyType = prefs.getString("penaltyType");
-      if (["%", "Direct"].contains(savedPenaltyType)) {
-        penaltyType = savedPenaltyType!;
-      }
-    });
+    if (mounted) {
+      setState(() {
+        clientController.text = "";
+        yourNameController.text = prefs.getString("yourName") ?? "";
+        brandController.text = prefs.getString("brandName") ?? "";
+        accountController.text = prefs.getString("accountNo") ?? "";
+        emailController.text = prefs.getString("email") ?? "";
+        phoneController.text = prefs.getString("phone") ?? "";
+        penaltyController.text = prefs.getString("penaltyValue") ?? "0";
+
+        final savedPayment = prefs.getString("paymentMethod") ?? "Bank Transfer";
+        _selectedPayment = _paymentMethods.contains(savedPayment) ? savedPayment : "Bank Transfer";
+        _paymentController.text = _selectedPayment;
+
+        final savedPenaltyType = prefs.getString("penaltyType");
+        if (["%", "Direct"].contains(savedPenaltyType)) {
+          penaltyType = savedPenaltyType!;
+        }
+      });
+    }
   }
 
   Future<void> _addNewValue(String value, List<String> list, String prefKey) async {
@@ -299,7 +326,36 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
   Future<void> saveInvoice() async {
     if (!_validateForm()) return;
 
-    // Save new service names used in this invoice
+    // Save new client to database directory if new
+    final clientName = clientController.text.trim();
+    final isExistingClient = _dbClients.any((c) => c.name.toLowerCase() == clientName.toLowerCase());
+    if (!isExistingClient && clientName.isNotEmpty) {
+      final newClient = Client(
+        name: clientName,
+        email: emailController.text.trim(),
+        phone: phoneController.text.trim(),
+        companyName: brandController.text.trim(),
+        address: '',
+      );
+      await repo.insertClient(newClient);
+    }
+
+    // Save new services to database directory if new
+    for (var row in serviceDatas) {
+      final sName = row.nameController.text.trim();
+      final isExistingService = _dbServices.any((s) => s.name.toLowerCase() == sName.toLowerCase());
+      if (!isExistingService && sName.isNotEmpty) {
+        final sPrice = double.tryParse(row.priceController.text) ?? 0.0;
+        final newService = PredefinedService(
+          name: sName,
+          description: '',
+          defaultPrice: sPrice,
+        );
+        await repo.insertPredefinedService(newService);
+      }
+    }
+
+    // Save new service names to legacy autocomplete list as well for fallback
     final prefs = await SharedPreferences.getInstance();
     for (var row in serviceDatas) {
       final name = row.nameController.text.trim();
@@ -331,6 +387,8 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
       penaltyValue: double.tryParse(penaltyController.text) ?? 0,
       notes: "",
       createdAt: DateTime.now().toString(),
+      templateStyle: templateStyle,
+      accentColor: accentColor,
     );
 
     final invoiceId = await repo.insertInvoice(invoice);
@@ -365,22 +423,66 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ─── PARTY DETAILS ────────────────────────────────────────────
-            _buildCardSection(
+            InvoiceFormSectionCard(
               title: "Invoice Details",
               child: Column(
                 children: [
-                  _autocompleteField(
-                    controller: clientController,
-                    focusNode: _clientFocusNode,
-                    label: "Client Name",
-                    options: _clientNames,
-                    showAddButton: _showClientAddButton,
-                    onAdd: () => _addNewValue(clientController.text, _clientNames, "savedClientNames"),
-                    capitalization: TextCapitalization.words,
-                    onChanged: (v) => _updateAddButton(v, _clientNames, (b) => _showClientAddButton = b),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AddableAutocompleteField(
+                          controller: clientController,
+                          focusNode: _clientFocusNode,
+                          label: "Client Name",
+                          options: _clientNames,
+                          showAddButton: _showClientAddButton,
+                          onAdd: () => _addNewValue(clientController.text, _clientNames, "savedClientNames"),
+                          capitalization: TextCapitalization.words,
+                          onChanged: (v) => _updateAddButton(v, _clientNames, (b) => _showClientAddButton = b),
+                          onSelected: (selection) {
+                            final client = _dbClients.firstWhere(
+                              (c) => c.name.toLowerCase() == selection.toLowerCase(),
+                              orElse: () => Client(name: selection),
+                            );
+                            if (client.id != null) {
+                              setState(() {
+                                emailController.text = client.email;
+                                phoneController.text = client.phone;
+                                brandController.text = client.companyName;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.people_alt_outlined),
+                        tooltip: "Client Directory",
+                        onPressed: () async {
+                          final selected = await Navigator.push<Client>(
+                            context,
+                            MaterialPageRoute(builder: (_) => const ClientDirectoryScreen(selectionMode: true)),
+                          );
+                          if (!mounted) return;
+
+                          if (selected != null) {
+                            setState(() {
+                              clientController.text = selected.name;
+                              // Auto-fill client fields
+                              emailController.text = selected.email;
+                              phoneController.text = selected.phone;
+                              brandController.text = selected.companyName;
+                              _showClientAddButton = false;
+                            });
+                          }
+
+                          await _loadAutocompleteLists();
+                        },
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
-                  _autocompleteField(
+                  AddableAutocompleteField(
                     controller: yourNameController,
                     focusNode: _yourNameFocusNode,
                     label: "Your Name / Business",
@@ -391,7 +493,7 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                     onChanged: (v) => _updateAddButton(v, _yourNames, (b) => _showYourNameAddButton = b),
                   ),
                   const SizedBox(height: 16),
-                  _autocompleteField(
+                  AddableAutocompleteField(
                     controller: brandController,
                     focusNode: _brandFocusNode,
                     label: "Brand Name",
@@ -402,7 +504,7 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                     onChanged: (v) => _updateAddButton(v, _brandNames, (b) => _showBrandAddButton = b),
                   ),
                   const SizedBox(height: 16),
-                  _autocompleteField(
+                  AddableAutocompleteField(
                     controller: emailController,
                     focusNode: _emailFocusNode,
                     label: "Email",
@@ -414,7 +516,7 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                     onChanged: (v) => _updateAddButton(v, _emails, (b) => _showEmailAddButton = b),
                   ),
                   const SizedBox(height: 16),
-                  _autocompleteField(
+                  AddableAutocompleteField(
                     controller: phoneController,
                     focusNode: _phoneFocusNode,
                     label: "Phone",
@@ -433,7 +535,7 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
             const SizedBox(height: 32),
 
             // ─── DATES ─────────────────────────────────────────────────────
-            _buildCardSection(
+            InvoiceFormSectionCard(
               title: "Invoice Dates",
               child: Row(
                 children: [
@@ -476,27 +578,67 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     children: [
-                      _autocompleteField(
-                        controller: data.nameController,
-                        focusNode: data.focusNode,
-                        label: "Service Name",
-                        options: _serviceNames,
-                        showAddButton: data.showAddButton,
-                        onAdd: () => _addNewValue(data.nameController.text, _serviceNames, "savedServiceNames"),
-                        capitalization: TextCapitalization.sentences,
-                        // This is the critical fix – update visibility while typing
-                        onChanged: (value) {
-                          _updateAddButton(value, _serviceNames, (v) => data.showAddButton = v);
-                        },
+                      Row(
+                        children: [
+                          Expanded(
+                            child: AddableAutocompleteField(
+                              controller: data.nameController,
+                              focusNode: data.focusNode,
+                              label: "Service Name",
+                              options: _serviceNames,
+                              showAddButton: data.showAddButton,
+                              onAdd: () => _addNewValue(data.nameController.text, _serviceNames, "savedServiceNames"),
+                              capitalization: TextCapitalization.sentences,
+                              onChanged: (value) {
+                                _updateAddButton(value, _serviceNames, (v) => data.showAddButton = v);
+                              },
+                              onSelected: (selection) {
+                                final s = _dbServices.firstWhere(
+                                  (item) => item.name.toLowerCase() == selection.toLowerCase(),
+                                  orElse: () => PredefinedService(name: selection, defaultPrice: 0),
+                                );
+                                if (s.id != null) {
+                                  setState(() {
+                                    data.priceController.text = s.defaultPrice.toStringAsFixed(0);
+                                    calculateTotal();
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: const Icon(Icons.design_services_outlined),
+                            tooltip: "Service Directory",
+                            onPressed: () async {
+                              final selected = await Navigator.push<PredefinedService>(
+                                context,
+                                MaterialPageRoute(builder: (_) => const ServiceDirectoryScreen(selectionMode: true)),
+                              );
+                              if (!mounted) return;
+
+                              if (selected != null) {
+                                setState(() {
+                                  data.nameController.text = selected.name;
+                                  data.priceController.text = selected.defaultPrice.toStringAsFixed(0);
+                                  data.showAddButton = false;
+                                  calculateTotal();
+                                });
+                              }
+
+                              await _loadAutocompleteLists();
+                            },
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 16),
                       Row(
                         children: [
                           Expanded(
-                            child: _textField(
-                              data.quantityController,
-                              "Quantity",
-                              TextCapitalization.none,
+                            child: LabeledTextField(
+                              controller: data.quantityController,
+                              label: "Quantity",
+                              capitalization: TextCapitalization.none,
                               keyboard: TextInputType.number,
                               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                               onChanged: (_) => calculateTotal(),
@@ -504,10 +646,10 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                           ),
                           const SizedBox(width: 16),
                           Expanded(
-                            child: _textField(
-                              data.priceController,
-                              "Unit Price",
-                              TextCapitalization.none,
+                            child: LabeledTextField(
+                              controller: data.priceController,
+                              label: "Unit Price",
+                              capitalization: TextCapitalization.none,
                               keyboard: TextInputType.number,
                               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                               onChanged: (_) => calculateTotal(),
@@ -557,11 +699,11 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
             const SizedBox(height: 32),
 
             // Payment Information (unchanged)
-            _buildCardSection(
+            InvoiceFormSectionCard(
               title: "Payment Information",
               child: Column(
                 children: [
-                  _autocompleteField(
+                  AddableAutocompleteField(
                     controller: accountController,
                     focusNode: _accountFocusNode,
                     label: "Account No / IBAN",
@@ -668,10 +810,10 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                         children: [
                           Expanded(
                             flex: 3,
-                            child: _textField(
-                              penaltyController,
-                              "Late Fee Penalty",
-                              TextCapitalization.none,
+                            child: LabeledTextField(
+                              controller: penaltyController,
+                              label: "Late Fee Penalty",
+                              capitalization: TextCapitalization.none,
                               keyboard: TextInputType.number,
                               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                             ),
@@ -706,14 +848,14 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
 
             const SizedBox(height: 32),
 
-            _buildCardSection(
+            InvoiceFormSectionCard(
               title: "Totals",
               child: Column(
                 children: [
-                  _textField(
-                    discountController,
-                    "Discount / Adjustment",
-                    TextCapitalization.none,
+                  LabeledTextField(
+                    controller: discountController,
+                    label: "Discount / Adjustment",
+                    capitalization: TextCapitalization.none,
                     keyboard: TextInputType.number,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     onChanged: (_) => calculateTotal(),
@@ -741,6 +883,90 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
               ),
             ),
 
+            const SizedBox(height: 32),
+
+            InvoiceFormSectionCard(
+              title: "Invoice Style & Accent Color",
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("Template Design", style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: InvoiceTemplateCard(
+                          label: "Classic Minimalist",
+                          description: "Clean black lines",
+                          icon: Icons.border_all_rounded,
+                          isSelected: templateStyle == 'classic',
+                          onSelected: () => setState(() => templateStyle = 'classic'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: InvoiceTemplateCard(
+                          label: "Modern Professional",
+                          description: "Accent block layout",
+                          icon: Icons.dashboard_rounded,
+                          isSelected: templateStyle == 'modern',
+                          onSelected: () => setState(() => templateStyle = 'modern'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: InvoiceTemplateCard(
+                          label: "Bold Editorial",
+                          description: "Solid banner header",
+                          icon: Icons.view_headline_rounded,
+                          isSelected: templateStyle == 'bold',
+                          onSelected: () => setState(() => templateStyle = 'bold'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Text("Accent Color", style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      AccentColorDot(
+                        color: Colors.blueGrey,
+                        label: 'Slate',
+                        isSelected: accentColor == 'default',
+                        onSelected: () => setState(() => accentColor = 'default'),
+                      ),
+                      AccentColorDot(
+                        color: Colors.indigo,
+                        label: 'Blue',
+                        isSelected: accentColor == 'blue',
+                        onSelected: () => setState(() => accentColor = 'blue'),
+                      ),
+                      AccentColorDot(
+                        color: Colors.teal,
+                        label: 'Green',
+                        isSelected: accentColor == 'green',
+                        onSelected: () => setState(() => accentColor = 'green'),
+                      ),
+                      AccentColorDot(
+                        color: Colors.amber[700]!,
+                        label: 'Gold',
+                        isSelected: accentColor == 'gold',
+                        onSelected: () => setState(() => accentColor = 'gold'),
+                      ),
+                      AccentColorDot(
+                        color: Colors.deepOrangeAccent,
+                        label: 'Red',
+                        isSelected: accentColor == 'red',
+                        onSelected: () => setState(() => accentColor = 'red'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
             const SizedBox(height: 48),
 
             SizedBox(
@@ -760,115 +986,4 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
     );
   }
 
-  // ────────────────────────────────────────────────────────────────
-  // Reusable autocomplete field with + add button
-  Widget _autocompleteField({
-    required TextEditingController controller,
-    required FocusNode focusNode,
-    required String label,
-    required List<String> options,
-    required bool showAddButton,
-    required VoidCallback onAdd,
-    required TextCapitalization capitalization,
-    TextInputType? keyboard,
-    List<TextInputFormatter>? inputFormatters,
-    ValueChanged<String>? onChanged,
-  }) {
-    return Autocomplete<String>(
-      focusNode: focusNode,
-      textEditingController: controller,
-      // Show all options when field is empty/focused
-      optionsBuilder: (TextEditingValue textEditingValue) {
-        final query = textEditingValue.text.trim().toLowerCase();
-
-        if (query.isEmpty) {
-          // When empty → show ALL items (or empty list if you prefer)
-          return options;
-        }
-
-        // When typing → filter normally
-        return options.where((option) => option.toLowerCase().contains(query));
-      },
-      // Optional: hide the dropdown if no options (you can remove this if you want to always show)
-      displayStringForOption: (String option) => option,
-      onSelected: (String selection) {
-        controller.text = selection;
-        focusNode.unfocus();
-      },
-      fieldViewBuilder: (
-          BuildContext context,
-          TextEditingController fieldController,
-          FocusNode fieldFocusNode,
-          VoidCallback onFieldSubmitted,
-          ) {
-        return TextField(
-          controller: fieldController,
-          focusNode: fieldFocusNode,
-          textCapitalization: capitalization,
-          keyboardType: keyboard,
-          inputFormatters: inputFormatters,
-          decoration: InputDecoration(
-            labelText: label,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            suffixIcon: showAddButton && fieldFocusNode.hasFocus
-                ? IconButton(
-              icon: const Icon(Icons.add_circle, color: Colors.green),
-              tooltip: "Add new $label",
-              onPressed: () {
-                onAdd();
-                fieldFocusNode.unfocus();
-              },
-            )
-                : null,
-          ),
-          onChanged: (value) {
-            if (onChanged != null) onChanged(value);
-          },
-          onSubmitted: (value) {
-            if (showAddButton) onAdd();
-          },
-        );
-      },
-    );
-  }
-
-  Widget _textField(
-      TextEditingController controller,
-      String label,
-      TextCapitalization capitalization, {
-        TextInputType? keyboard,
-        List<TextInputFormatter>? inputFormatters,
-        ValueChanged<String>? onChanged,
-      }) {
-    return TextField(
-      controller: controller,
-      textCapitalization: capitalization,
-      keyboardType: keyboard,
-      inputFormatters: inputFormatters,
-      onChanged: onChanged,
-      decoration: InputDecoration(
-        labelText: label,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      ),
-    );
-  }
-
-  Widget _buildCardSection({required String title, required Widget child}) {
-    return Card(
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 20),
-            child,
-          ],
-        ),
-      ),
-    );
-  }
 }
