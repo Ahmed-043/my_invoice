@@ -46,6 +46,7 @@ final Map<String, Map<String, String>> dbSchema = {
     'currency_type': 'TEXT NOT NULL DEFAULT "USD"',
     'discount_adjustments': 'REAL DEFAULT 0',
     'payment_amount': 'REAL NOT NULL DEFAULT 0',
+    'status': "TEXT CHECK(status IN ('Paid','Unpaid')) NOT NULL DEFAULT 'Paid'",
     'created_at': 'TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP',
   },
 

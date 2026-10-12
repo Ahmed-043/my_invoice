@@ -20,7 +20,6 @@ create table if not exists public.users (
   friends jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
-
 );
 
 -- Ensure column exists if table was created previously
@@ -82,8 +81,12 @@ create table if not exists public.payment_entries (
   currency_type text not null default 'USD',
   discount_adjustments numeric(12,2) not null default 0.00,
   payment_amount numeric(12,2) not null default 0.00,
+  status text not null default 'Paid' check (status in ('Paid', 'Unpaid')),
   created_at timestamptz not null default now()
 );
+
+-- Ensure column exists if table was created previously
+alter table public.payment_entries add column if not exists status text not null default 'paid' check (status in ('paid', 'unpaid'));
 
 -- 6. PREDEFINED SERVICES TABLE
 create table if not exists public.predefined_services (
