@@ -19,6 +19,7 @@ create table if not exists public.users (
   app_status text not null default 'allowed' check (app_status in ('allowed', 'banned')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+
 );
 
 -- Trigger for users updated_at
