@@ -17,9 +17,13 @@ create table if not exists public.users (
   phone text default '',
   email text not null,
   app_status text not null default 'allowed' check (app_status in ('allowed', 'banned')),
+  friends jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Ensure column exists if table was created previously
+alter table public.users add column if not exists friends jsonb not null default '[]'::jsonb;
 
 -- Trigger for users updated_at
 drop trigger if exists set_users_updated_at on public.users;

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../services/supabase_service.dart';
 
 class ServiceDirectoryScreen extends StatefulWidget {
   /// When true, tapping a service will `pop()` the selected service map instead of opening edit.
@@ -12,6 +13,9 @@ class ServiceDirectoryScreen extends StatefulWidget {
 }
 
 class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
+  final supabaseService = SupabaseService();
+  bool isLoading = true;
+
   List<Map<String, dynamic>> services = [];
   List<Map<String, dynamic>> filteredServices = [];
   final searchController = TextEditingController();
@@ -28,7 +32,27 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
     super.dispose();
   }
 
-  void loadServices({String query = ''}) {
+  Future<void> loadServices({String query = ''}) async {
+    try {
+      final list = await supabaseService.getPredefinedServices();
+      services = list.map((s) {
+        return {
+          'id': s['id'],
+          'name': s['name'] ?? '',
+          'description': s['description'] ?? '',
+          'defaultPrice': (s['default_price'] as num?)?.toDouble() ?? 0.0,
+        };
+      }).toList();
+    } catch (e) {
+      debugPrint("Error loading services: $e");
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+
+    _filterServices(query: query);
+  }
+
+  void _filterServices({String query = ''}) {
     if (query.trim().isEmpty) {
       filteredServices = List.from(services);
     } else {
@@ -76,7 +100,7 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: priceController,
-                  decoration: const InputDecoration(labelText: "Default Unit Price", prefixText: "Rs "),
+                  decoration: const InputDecoration(labelText: "Default Unit Price", prefixText: "\$ "),
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   validator: (v) {
                     if (v == null || v.trim().isEmpty) return "Price is required";
@@ -94,26 +118,38 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
             child: const Text("Cancel"),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               if (formKey.currentState!.validate()) {
-                final newService = {
-                  'id': service?['id'] ?? DateTime.now().millisecondsSinceEpoch,
-                  'name': nameController.text.trim(),
-                  'description': descriptionController.text.trim(),
-                  'defaultPrice': double.parse(priceController.text.trim()),
-                };
+                final name = nameController.text.trim();
+                final desc = descriptionController.text.trim();
+                final price = double.parse(priceController.text.trim());
 
-                if (service == null) {
-                  services.add(newService);
-                } else {
-                  final index = services.indexWhere((s) => s['id'] == service['id']);
-                  if (index != -1) {
-                    services[index] = newService;
+                try {
+                  if (service == null) {
+                    await supabaseService.createPredefinedService({
+                      'name': name,
+                      'description': desc,
+                      'default_price': price,
+                    });
+                  } else {
+                    await supabaseService.updatePredefinedService(service['id'].toString(), {
+                      'name': name,
+                      'description': desc,
+                      'default_price': price,
+                    });
+                  }
+
+                  if (mounted) {
+                    Navigator.pop(context);
+                    await loadServices(query: searchController.text);
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("Error saving service: $e"), backgroundColor: Colors.red),
+                    );
                   }
                 }
-
-                Navigator.pop(context);
-                loadServices(query: searchController.text);
               }
             },
             child: const Text("Save"),
@@ -138,7 +174,7 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
             padding: const EdgeInsets.all(16),
             child: TextField(
               controller: searchController,
-              onChanged: (value) => loadServices(query: value),
+              onChanged: (value) => _filterServices(query: value),
               decoration: InputDecoration(
                 hintText: "Search services...",
                 prefixIcon: const Icon(Icons.search),
@@ -152,102 +188,114 @@ class _ServiceDirectoryScreenState extends State<ServiceDirectoryScreen> {
             ),
           ),
           Expanded(
-            child: filteredServices.isEmpty
-                ? Center(
-                    child: Text(
-                      searchController.text.isEmpty
-                          ? "No services saved yet."
-                          : "No matching services found.",
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                  )
-                : ListView.builder(
-                    itemCount: filteredServices.length,
-                    padding: const EdgeInsets.only(bottom: 80),
-                    itemBuilder: (context, index) {
-                      final service = filteredServices[index];
-                      final name = service['name'] as String? ?? '';
-                      final description = service['description'] as String? ?? '';
-                      final defaultPrice = (service['defaultPrice'] as num?)?.toDouble() ?? 0.0;
+            child: isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : filteredServices.isEmpty
+                    ? Center(
+                        child: Text(
+                          searchController.text.isEmpty
+                              ? "No services saved yet."
+                              : "No matching services found.",
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: filteredServices.length,
+                        padding: const EdgeInsets.only(bottom: 80),
+                        itemBuilder: (context, index) {
+                          final service = filteredServices[index];
+                          final name = service['name'] as String? ?? '';
+                          final description = service['description'] as String? ?? '';
+                          final defaultPrice = (service['defaultPrice'] as num?)?.toDouble() ?? 0.0;
 
-                      return Card(
-                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          leading: CircleAvatar(
-                            backgroundColor: colorScheme.secondary.withValues(alpha: 0.1),
-                            foregroundColor: colorScheme.secondary,
-                            child: const Icon(Icons.design_services_outlined),
-                          ),
-                          title: Text(
-                            name,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                          ),
-                          subtitle: description.isNotEmpty
-                              ? Text(
-                                  description,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                )
-                              : null,
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                "Rs ${defaultPrice.toStringAsFixed(0)}",
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: colorScheme.primary,
-                                  fontSize: 16,
-                                ),
+                          return Card(
+                            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              leading: CircleAvatar(
+                                backgroundColor: colorScheme.secondary.withValues(alpha: 0.1),
+                                foregroundColor: colorScheme.secondary,
+                                child: const Icon(Icons.design_services_outlined),
                               ),
-                              const SizedBox(width: 8),
-                              IconButton(
-                                icon: const Icon(Icons.edit_outlined),
-                                onPressed: () => _showAddEditServiceDialog(service: service),
+                              title: Text(
+                                name,
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                                onPressed: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (dialogContext) => AlertDialog(
-                                      title: const Text("Delete Service"),
-                                      content: Text("Are you sure you want to delete $name?"),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () => Navigator.pop(dialogContext),
-                                          child: const Text("Cancel"),
-                                        ),
-                                        TextButton(
-                                          onPressed: () {
-                                            services.removeWhere((s) => s['id'] == service['id']);
-                                            Navigator.pop(dialogContext);
-                                            loadServices(query: searchController.text);
-                                          },
-                                          child: const Text("Delete", style: TextStyle(color: Colors.red)),
-                                        ),
-                                      ],
+                              subtitle: description.isNotEmpty
+                                  ? Text(
+                                      description,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    )
+                                  : null,
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    "\$ ${defaultPrice.toStringAsFixed(0)}",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: colorScheme.primary,
+                                      fontSize: 16,
                                     ),
-                                  );
-                                },
+                                  ),
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    icon: const Icon(Icons.edit_outlined),
+                                    onPressed: () => _showAddEditServiceDialog(service: service),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                    onPressed: () {
+                                      showDialog(
+                                        context: context,
+                                        builder: (dialogContext) => AlertDialog(
+                                          title: const Text("Delete Service"),
+                                          content: Text("Are you sure you want to delete $name?"),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(dialogContext),
+                                              child: const Text("Cancel"),
+                                            ),
+                                            TextButton(
+                                              onPressed: () async {
+                                                try {
+                                                  await supabaseService.deletePredefinedService(service['id'].toString());
+                                                  if (mounted) {
+                                                    Navigator.pop(dialogContext);
+                                                    await loadServices(query: searchController.text);
+                                                  }
+                                                } catch (e) {
+                                                  if (mounted) {
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      SnackBar(content: Text("Delete error: $e"), backgroundColor: Colors.red),
+                                                    );
+                                                  }
+                                                }
+                                              },
+                                              child: const Text("Delete", style: TextStyle(color: Colors.red)),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                          onTap: () {
-                            if (widget.selectionMode) {
-                              Navigator.pop(context, service);
-                            } else {
-                              _showAddEditServiceDialog(service: service);
-                            }
-                          },
-                        ),
-                      );
-                    },
-                  ),
+                              onTap: () {
+                                if (widget.selectionMode) {
+                                  Navigator.pop(context, service);
+                                } else {
+                                  _showAddEditServiceDialog(service: service);
+                                }
+                              },
+                            ),
+                          );
+                        },
+                      ),
           ),
         ],
       ),

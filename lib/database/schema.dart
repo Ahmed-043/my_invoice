@@ -6,6 +6,7 @@ final Map<String, Map<String, String>> dbSchema = {
     'phone': 'TEXT DEFAULT ""',
     'email': 'TEXT NOT NULL',
     'app_status': "TEXT CHECK(app_status IN ('allowed','banned')) NOT NULL DEFAULT 'allowed'",
+    'friends': 'TEXT NOT NULL DEFAULT "[]"', // JSON array string of friend user IDs: ["uuid1", "uuid2"]
     'created_at': 'TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP',
     'updated_at': 'TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP',
   },

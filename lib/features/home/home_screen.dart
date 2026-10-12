@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme/theme_provider.dart';
+import '../../services/supabase_service.dart';
+import '../auth/auth_screen.dart';
 import '../invoice_form/invoice_form_screen.dart';
 import '../invoice_view/invoice_preview_screen.dart';
 import '../directories/client_directory_screen.dart';
@@ -19,8 +21,10 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
+  final supabaseService = SupabaseService();
+  bool isLoading = true;
+
   List<Map<String, dynamic>> allInvoices = [];
-  Map<int, List<Map<String, dynamic>>> invoiceServicesMap = {};
   final searchController = TextEditingController();
 
   List<String> displayOrder = [];
@@ -44,6 +48,56 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> loadData({String query = ''}) async {
+    try {
+      final projects = await supabaseService.getProjects();
+      allInvoices = projects.map((p) {
+        final totalPay = (p['total_payment'] as num?)?.toDouble() ?? 0.0;
+        final paid = (p['paid_amount'] as num?)?.toDouble() ?? 0.0;
+        String status = 'pending';
+        if (paid >= totalPay && totalPay > 0) {
+          status = 'paid';
+        } else if (paid > 0) {
+          status = 'partially_paid';
+        }
+
+        List<Map<String, dynamic>> serviceList = [];
+        if (p['services'] != null && p['services'] is List) {
+          serviceList = List<Map<String, dynamic>>.from(p['services']);
+        }
+
+        return {
+          'id': p['id'],
+          'clientName': p['client_name'] ?? '',
+          'yourName': p['brand_name'] ?? '',
+          'brandName': p['brand_name'] ?? '',
+          'issuedDate': p['date_from'] ?? '',
+          'dueDate': p['date_to'] ?? '',
+          'currencySymbol': '\$',
+          'currencyCode': 'USD',
+          'discount': 0.0,
+          'subtotal': totalPay,
+          'total': totalPay,
+          'paidAmount': paid,
+          'paymentMethod': 'Bank Transfer',
+          'accountNo': '',
+          'email': '',
+          'phone': '',
+          'status': status,
+          'penaltyType': '%',
+          'penaltyValue': 0.0,
+          'notes': '',
+          'createdAt': p['created_at'] ?? '',
+          'templateStyle': 'classic',
+          'accentColor': 'default',
+          'rawServices': serviceList,
+        };
+      }).toList();
+    } catch (e) {
+      debugPrint("Error fetching projects: $e");
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+
     _calculateStats();
     await _groupAndSort(query: query);
   }
@@ -55,7 +109,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final inputFormat = DateFormat("d MMM yyyy");
+    final inputFormat = DateFormat("yyyy-MM-dd");
 
     for (var inv in allInvoices) {
       final paidAmount = (inv['paidAmount'] as num?)?.toDouble() ?? 0.0;
@@ -66,16 +120,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       received += paidAmount;
       unpaid += (total - paidAmount);
 
-      if (status != 'paid') {
+      if (status != 'paid' && dueDateStr.isNotEmpty) {
         try {
           final dueDate = inputFormat.parse(dueDateStr);
           final dueDay = DateTime(dueDate.year, dueDate.month, dueDate.day);
           if (dueDay.isBefore(today)) {
             overdue++;
           }
-        } catch (e) {
-          // ignore parsing error
-        }
+        } catch (_) {}
       }
     }
 
@@ -95,22 +147,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     if (query.trim().isNotEmpty) {
       final q = query.trim().toLowerCase();
       filteredInvoices = allInvoices.where((inv) {
-        final idStr = inv['id'].toString();
+        final idStr = inv['id'].toString().toLowerCase();
         final clientName = (inv['clientName'] as String? ?? '').toLowerCase();
-        final yourName = (inv['yourName'] as String? ?? '').toLowerCase();
         final brandName = (inv['brandName'] as String? ?? '').toLowerCase();
 
-        return idStr == q ||
-            clientName.contains(q) ||
-            yourName.contains(q) ||
-            brandName.contains(q);
+        return idStr.contains(q) || clientName.contains(q) || brandName.contains(q);
       }).toList();
     }
 
     grouped = {};
     for (var inv in filteredInvoices) {
       final client = (inv['clientName'] as String? ?? '').trim();
-      grouped.putIfAbsent(client, () => []).add(inv);
+      if (client.isNotEmpty) {
+        grouped.putIfAbsent(client, () => []).add(inv);
+      }
     }
 
     final activeClients = grouped.keys.toSet();
@@ -134,12 +184,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final id = invoice['id'];
     final paidAmount = (invoice['paidAmount'] as num?)?.toDouble() ?? 0.0;
     final total = (invoice['total'] as num?)?.toDouble() ?? 0.0;
-    final currencySymbol = invoice['currencySymbol'] as String? ?? 'Rs';
+    final currencySymbol = invoice['currencySymbol'] as String? ?? '\$';
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text("Payment for Invoice #$id"),
+        title: Text("Payment for Project #${id.toString().substring(0, 8)}"),
         content: Form(
           key: formKey,
           child: Column(
@@ -171,13 +221,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 },
                 autofocus: true,
               ),
-              const SizedBox(height: 8),
-              Text(
-                "Tip: Use negative value (e.g. -1500) to deduct/refund",
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
             ],
           ),
         ),
@@ -203,21 +246,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       final amount = double.tryParse(amountText);
 
       if (amount != null) {
-        final index = allInvoices.indexWhere((i) => i['id'] == id);
-        if (index != -1) {
-          final current = allInvoices[index];
-          final currentPaid = (current['paidAmount'] as num?)?.toDouble() ?? 0.0;
-          final currentTotal = (current['total'] as num?)?.toDouble() ?? 0.0;
-
-          double newPaid = (currentPaid + amount).clamp(0.0, currentTotal);
-          String newStatus = newPaid >= currentTotal
-              ? 'paid'
-              : (newPaid > 0 ? 'partially_paid' : 'pending');
-
-          allInvoices[index]['paidAmount'] = newPaid;
-          allInvoices[index]['status'] = newStatus;
-
+        try {
+          await supabaseService.createPaymentEntry(
+            projectId: id.toString(),
+            amount: amount,
+            paymentMethod: 'Bank Transfer',
+          );
           await loadData(query: searchController.text);
+        } catch (e) {
+          if (mounted) {
+            final messenger = ScaffoldMessenger.of(context);
+            messenger.showSnackBar(
+              SnackBar(content: Text("Payment error: $e"), backgroundColor: Colors.red),
+            );
+          }
         }
       }
     }
@@ -240,22 +282,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final colorScheme = theme.colorScheme;
 
     final id = invoice['id'];
+    final displayId = id.toString().length > 8 ? id.toString().substring(0, 8) : id.toString();
     final status = (invoice['status'] as String? ?? 'pending').toLowerCase();
-    final currencySymbol = invoice['currencySymbol'] as String? ?? 'Rs';
+    final currencySymbol = invoice['currencySymbol'] as String? ?? '\$';
     final total = (invoice['total'] as num?)?.toDouble() ?? 0.0;
     final dueDateStr = invoice['dueDate'] as String? ?? '';
 
     final isPaid = status == 'paid';
     final isPartial = status == 'partially_paid';
     final isPending = !isPaid && !isPartial;
-    DateFormat inputFormat = DateFormat("d MMM yyyy");
 
-    DateTime dueDate = DateTime.now();
-    try {
-      dueDate = inputFormat.parse(dueDateStr);
-    } catch (_) {}
+    bool isDue = false;
+    if (dueDateStr.isNotEmpty) {
+      try {
+        final dueDate = DateFormat("yyyy-MM-dd").parse(dueDateStr);
+        isDue = dueDate.isBefore(DateTime.now());
+      } catch (_) {}
+    }
 
-    final isDue = dueDate.isBefore(DateTime.now());
+    final services = List<Map<String, dynamic>>.from(invoice['rawServices'] ?? []);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -273,7 +318,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
             onTap: () async {
-              final services = invoiceServicesMap[id] ?? [];
               final int clientInvoiceSequence = _getClientInvoiceSequence(invoice);
 
               if (!mounted) return;
@@ -326,7 +370,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
               title: Text(
-                "Invoice #$id",
+                "Project #$displayId",
                 style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
               ),
               subtitle: Text(
@@ -364,7 +408,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final currencySymbol = invoices.isNotEmpty ? (invoices.first['currencySymbol'] as String? ?? 'Rs') : 'Rs';
+    final currencySymbol = invoices.isNotEmpty ? (invoices.first['currencySymbol'] as String? ?? '\$') : '\$';
 
     return Card(
       key: ValueKey(clientName),
@@ -391,7 +435,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           subtitle: Row(
             children: [
               Text(
-                "${invoices.length} invoice${invoices.length == 1 ? '' : 's'}",
+                "${invoices.length} project${invoices.length == 1 ? '' : 's'}",
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
@@ -456,6 +500,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ref.read(themeProvider.notifier).toggleTheme();
                   break;
 
+                case 'seed_data':
+                  try {
+                    setState(() => isLoading = true);
+                    await supabaseService.seedDummyData();
+                    await loadData(query: searchController.text);
+                    if (mounted) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        const SnackBar(
+                          content: Text("Inserted dummy test data across all 5 tables!"),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        SnackBar(content: Text("Error seeding data: $e"), backgroundColor: Colors.red),
+                      );
+                    }
+                  } finally {
+                    if (mounted) setState(() => isLoading = false);
+                  }
+                  break;
+
                 case 'clients':
                   if (!mounted) return;
                   await Navigator.push(
@@ -473,6 +543,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   );
                   await loadData(query: searchController.text);
                   break;
+
+                case 'logout':
+                  await supabaseService.signOut();
+                  if (!mounted) return;
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AuthScreen()),
+                  );
+                  break;
               }
             },
             itemBuilder: (BuildContext context) => [
@@ -483,6 +562,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     Icon(Icons.brightness_6, size: 20),
                     SizedBox(width: 10),
                     Text("Toggle Theme"),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'seed_data',
+                child: Row(
+                  children: [
+                    Icon(Icons.data_saver_on_outlined, size: 20, color: Colors.blue),
+                    SizedBox(width: 10),
+                    Text("Seed Test Data"),
                   ],
                 ),
               ),
@@ -503,6 +592,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     Icon(Icons.design_services_outlined, size: 20),
                     SizedBox(width: 10),
                     Text("Service Directory"),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout, size: 20, color: Colors.red),
+                    SizedBox(width: 10),
+                    Text("Sign Out", style: TextStyle(color: Colors.red)),
                   ],
                 ),
               ),
@@ -537,56 +636,47 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
           ),
           Expanded(
-            child: allInvoices.isEmpty
-                ? const Center(
-                    child: Text(
-                      "No invoices yet",
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
-                    ),
-                  )
-                : displayOrder.isEmpty
-                    ? const Center(child: Text("Loading clients..."))
-                    : ReorderableListView(
-                        padding: const EdgeInsets.only(bottom: 100),
-                        onReorder: (oldIndex, newIndex) async {
-                          setState(() {
-                            if (newIndex > oldIndex) {
-                              newIndex -= 1;
-                            }
-                            final item = displayOrder.removeAt(oldIndex);
-                            displayOrder.insert(newIndex, item);
-                          });
-                          final prefs = await SharedPreferences.getInstance();
-                          await prefs.setStringList('savedClientNames', displayOrder);
-                        },
-                        children: displayOrder.map((client) {
-                          return _buildClientExpansionTile(client);
-                        }).toList(),
-                      ),
+            child: isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : allInvoices.isEmpty
+                    ? const Center(
+                        child: Text(
+                          "No projects yet",
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                        ),
+                      )
+                    : displayOrder.isEmpty
+                        ? const Center(child: Text("Loading clients..."))
+                        : ReorderableListView(
+                            padding: const EdgeInsets.only(bottom: 100),
+                            onReorder: (oldIndex, newIndex) async {
+                              setState(() {
+                                if (newIndex > oldIndex) {
+                                  newIndex -= 1;
+                                }
+                                final item = displayOrder.removeAt(oldIndex);
+                                displayOrder.insert(newIndex, item);
+                              });
+                              final prefs = await SharedPreferences.getInstance();
+                              await prefs.setStringList('savedClientNames', displayOrder);
+                            },
+                            children: displayOrder.map((client) {
+                              return _buildClientExpansionTile(client);
+                            }).toList(),
+                          ),
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          final result = await Navigator.push<Map<String, dynamic>>(
+          await Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const InvoiceFormScreen()),
           );
-          if (result != null) {
-            final invoice = result['invoice'] as Map<String, dynamic>?;
-            final services = result['services'] as List<Map<String, dynamic>>?;
-            if (invoice != null && services != null) {
-              final id = invoice['id'] as int;
-              setState(() {
-                allInvoices.insert(0, invoice);
-                invoiceServicesMap[id] = services;
-              });
-            }
-          }
           await loadData(query: searchController.text);
         },
         icon: const Icon(Icons.add),
-        label: const Text("New Invoice"),
+        label: const Text("New Project"),
       ),
     );
   }

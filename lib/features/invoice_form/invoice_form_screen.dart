@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../services/supabase_service.dart';
 import '../directories/client_directory_screen.dart';
 import '../directories/service_directory_screen.dart';
 import 'widgets/accent_color_dot.dart';
@@ -35,6 +36,9 @@ class ServiceRowData {
 }
 
 class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
+  final supabaseService = SupabaseService();
+  bool isSaving = false;
+
   // Controllers for main fields
   final clientController = TextEditingController();
   final yourNameController = TextEditingController();
@@ -77,8 +81,8 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
   final _emailFocusNode = FocusNode();
   final _phoneFocusNode = FocusNode();
 
-  String currencySymbol = "Rs";
-  String currencyCode = "PKR";
+  String currencySymbol = "\$";
+  String currencyCode = "USD";
   String status = "Pending";
   String penaltyType = "%";
   String templateStyle = "classic";
@@ -317,65 +321,54 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
   Future<void> saveInvoice() async {
     if (!_validateForm()) return;
 
-    final clientName = clientController.text.trim();
-    if (clientName.isNotEmpty && !_clientNames.any((c) => c.toLowerCase() == clientName.toLowerCase())) {
-      await _addNewValue(clientName, _clientNames, "savedClientNames");
-    }
+    setState(() => isSaving = true);
 
-    final prefs = await SharedPreferences.getInstance();
-    for (var row in serviceDatas) {
-      final name = row.nameController.text.trim();
-      if (name.isNotEmpty && !_serviceNames.any((s) => s.toLowerCase() == name.toLowerCase())) {
-        _serviceNames.add(name);
+    try {
+      final clientName = clientController.text.trim();
+      if (clientName.isNotEmpty && !_clientNames.any((c) => c.toLowerCase() == clientName.toLowerCase())) {
+        await _addNewValue(clientName, _clientNames, "savedClientNames");
       }
-    }
-    await prefs.setStringList("savedServiceNames", _serviceNames);
 
-    await _saveToPrefs();
+      final prefs = await SharedPreferences.getInstance();
+      for (var row in serviceDatas) {
+        final name = row.nameController.text.trim();
+        if (name.isNotEmpty && !_serviceNames.any((s) => s.toLowerCase() == name.toLowerCase())) {
+          _serviceNames.add(name);
+        }
+      }
+      await prefs.setStringList("savedServiceNames", _serviceNames);
+      await _saveToPrefs();
 
-    final generatedId = DateTime.now().millisecondsSinceEpoch % 100000;
-
-    final invoice = {
-      'id': generatedId,
-      'clientName': clientController.text.trim(),
-      'yourName': yourNameController.text.trim(),
-      'brandName': brandController.text.trim(),
-      'issuedDate': DateFormat("dd MMM yyyy").format(issuedDate),
-      'dueDate': DateFormat("dd MMM yyyy").format(dueDate),
-      'currencySymbol': currencySymbol,
-      'currencyCode': currencyCode,
-      'discount': double.tryParse(discountController.text) ?? 0,
-      'subtotal': subtotal,
-      'total': total,
-      'paidAmount': 0.0,
-      'paymentMethod': _selectedPayment.trim(),
-      'accountNo': accountController.text.trim(),
-      'email': emailController.text.trim(),
-      'phone': phoneController.text.trim(),
-      'status': status,
-      'penaltyType': penaltyType,
-      'penaltyValue': double.tryParse(penaltyController.text) ?? 0,
-      'notes': "",
-      'createdAt': DateTime.now().toString(),
-      'templateStyle': templateStyle,
-      'accentColor': accentColor,
-    };
-
-    final services = serviceDatas.map((s) {
-      return {
-        'invoiceId': generatedId,
-        'serviceName': s.nameController.text.trim(),
+      final servicesList = serviceDatas.map((s) => {
+        'name': s.nameController.text.trim(),
         'quantity': int.tryParse(s.quantityController.text) ?? 0,
-        'price': double.tryParse(s.priceController.text) ?? 0.0,
+        'unit_price': double.tryParse(s.priceController.text) ?? 0.0,
         'total': s.total,
-      };
-    }).toList();
+      }).toList();
 
-    if (mounted) {
-      Navigator.pop(context, {
-        'invoice': invoice,
-        'services': services,
-      });
+      final projectData = {
+        'client_name': clientController.text.trim(),
+        'brand_name': brandController.text.trim(),
+        'date_from': DateFormat("yyyy-MM-dd").format(issuedDate),
+        'date_to': DateFormat("yyyy-MM-dd").format(dueDate),
+        'total_no_of_tasks': 0,
+        'total_payment': total,
+        'paid_amount': 0.0,
+        'services': servicesList,
+        'shared_with': [],
+      };
+
+      await supabaseService.createProject(projectData);
+
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error creating project: $e"), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isSaving = false);
     }
   }
 
@@ -385,7 +378,7 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Create Invoice"),
+        title: const Text("Create Project"),
         elevation: 0,
       ),
       body: SingleChildScrollView(
@@ -394,7 +387,7 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             InvoiceFormSectionCard(
-              title: "Invoice Details",
+              title: "Project & Client Details",
               child: Column(
                 children: [
                   Row(
@@ -504,12 +497,12 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
             const SizedBox(height: 32),
 
             InvoiceFormSectionCard(
-              title: "Invoice Dates",
+              title: "Project Dates",
               child: Row(
                 children: [
                   Expanded(
                     child: ListTile(
-                      title: Text("Issued: ${DateFormat("dd MMM yyyy").format(issuedDate)}"),
+                      title: Text("Start: ${DateFormat("dd MMM yyyy").format(issuedDate)}"),
                       trailing: const Icon(Icons.calendar_today),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -532,7 +525,7 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
 
             const SizedBox(height: 32),
 
-            Text(" Services", style: Theme.of(context).textTheme.titleLarge),
+            Text(" Services Included", style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
 
             ...serviceDatas.asMap().entries.map((entry) {
@@ -617,7 +610,7 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
                             child: LabeledTextField(
                               controller: data.priceController,
                               label: "Unit Price",
-                              capitalization: TextCapitalization.none,
+                              capitalization: TextCapitalization.characters,
                               keyboard: TextInputType.number,
                               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                               onChanged: (_) => calculateTotal(),
@@ -942,8 +935,10 @@ class _InvoiceFormScreenState extends State<InvoiceFormScreen> {
               height: 56,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                onPressed: saveInvoice,
-                child: const Text("Save Invoice", style: TextStyle(fontSize: 17)),
+                onPressed: isSaving ? null : saveInvoice,
+                child: isSaving
+                    ? const CircularProgressIndicator()
+                    : const Text("Save Project", style: TextStyle(fontSize: 17)),
               ),
             ),
 
